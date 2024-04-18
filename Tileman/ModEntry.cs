@@ -4,20 +4,54 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
-
+using xTile.Layers;
+using xTile.Tiles;
 
 namespace Tileman
 {
+
+    public class PurchaseColumn
+    {
+        public HashSet<int> purchasedCells = new();
+    }
+    public class PurchaseRows
+    {
+        public Dictionary<int, PurchaseColumn> columns = new();
+    }
+    public class PurchaseData
+    {
+        public Dictionary<string, PurchaseRows> data = new();
+    }
+
+    public static class DictioanryExtensions
+    {
+        public static TValue GetOrCreate<TKey, TValue>(this IDictionary<TKey, TValue> dict, TKey key)
+            where TValue : new()
+        {
+            if (!dict.TryGetValue(key, out TValue val))
+            {
+                val = new TValue();
+                dict.Add(key, val);
+            }
+
+            return val;
+        }
+    }
+
+    public class PurchaseManifestFile
+    {
+        public PurchaseData purchaseData = new();
+        public int version = 1; // future proofing for save versioning
+    }
+
     public class ModEntry : Mod
     {
-
-
-
         public bool do_loop = true;
         public bool do_collision = true;
         public bool allow_player_placement = false;
@@ -25,37 +59,58 @@ namespace Tileman
         private bool tool_button_pushed = false;
         private bool location_changed = false;
 
-
         public double tile_price = 1.0;
         public double tile_price_raise = 0.0008;
-        public double dynamic_tile_price;
-
+        public double dynamic_tile_price = 1.0;
 
         public int caverns_extra = 0;
         public int difficulty_mode = 0;
         public int purchase_count=0;
         public int overlay_mode = 0;
 
-        int tile_count;
-
         public int amountLocations = 200;
         private int locationDelay = 0;
-
         private int collisionTick = 0;
 
         List<KaiTile> tileList = new();
         List<KaiTile> ThisLocationTiles = new();
         Dictionary<string, List<KaiTile>> tileDict = new();
+        PurchaseData purchased_tiles_by_location = new();
+
 
         Texture2D tileTexture  = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
         Texture2D tileTexture2 = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
         Texture2D tileTexture3 = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
 
-
-       
-
+        private bool legacy = true; // Pre-spicykai fork
 
 
+        HashSet<Vector2> specificInclusionsInTempLocation = new()
+                {
+                    new(21, 42),
+                    new(21, 43),
+                    new(21, 44),
+                    new(21, 45),
+                    new(21, 46),
+
+                    new(49, 42),
+                    new(49, 43),
+                    new(49, 44),
+                    new(49, 45),
+                    new(49, 46),
+                    new(49, 47),
+                    new(49, 48),
+                    new(49, 49),
+                    new(49, 50),
+                    new(49, 51),
+
+                    new(55, 102),
+                    new(55, 103),
+                    new(55, 104),
+                    new(55, 105),
+                    new(55, 106),
+                    new(55, 107)
+                };
 
         public override void Entry(IModHelper helper)
         {
@@ -63,28 +118,20 @@ namespace Tileman
             helper.Events.Input.ButtonPressed += this.OnButtonPressed;
             helper.Events.Display.RenderedWorld += this.DrawUpdate;
 
-
             helper.Events.GameLoop.Saved += this.SaveModData;
             helper.Events.GameLoop.SaveLoaded += this.LoadModData;
             helper.Events.GameLoop.DayStarted += this.DayStartedUpdate;
             helper.Events.GameLoop.ReturnedToTitle += this.TitleReturnUpdate;
-      
+
             tileTexture = helper.ModContent.Load<Texture2D>("assets/tile.png");
             tileTexture2 = helper.ModContent.Load<Texture2D>("assets/tile_2.png");
             tileTexture3 = helper.ModContent.Load<Texture2D>("assets/tile_3.png");
-
-
-
-            //CalculateTileSum();
-
         }
 
         private void removeSpecificTile(int xTile, int yTile, string gameLocation)
         {
-
             var tileData = this.Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{gameLocation}.json") ?? new MapData();
             var tempList = tileData.AllKaiTilesList;
-
 
             for (int i = 0; i < tileData.AllKaiTilesList.Count; i++)
             {
@@ -103,13 +150,8 @@ namespace Tileman
                 AllKaiTilesList = tempList,
             };
 
-
-
             Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{gameLocation}.json", mapData);
             tileList = new();
-
-
-
         }
 
         private void RemoveProperties(KaiTile tile, GameLocation gameLocation)
@@ -118,34 +160,39 @@ namespace Tileman
             if (gameLocation.doesTileHavePropertyNoNull(tile.tileX, tile.tileY, "Type", "Back") == "Dirt"
                 || gameLocation.doesTileHavePropertyNoNull(tile.tileX, tile.tileY, "Type", "Back") == "Grass") gameLocation.setTileProperty(tile.tileX, tile.tileY, "Back", "Diggable", "true");
 
-            gameLocation.removeTileProperty(tile.tileX, tile.tileY, "Back", "NoFurtniture");
+            gameLocation.removeTileProperty(tile.tileX, tile.tileY, "Back", "NoFurniture");
             gameLocation.removeTileProperty(tile.tileX, tile.tileY, "Back", "NoSprinklers");
 
             gameLocation.removeTileProperty(tile.tileX, tile.tileY, "Back", "Passable");
             gameLocation.removeTileProperty(tile.tileX, tile.tileY, "Back", "Placeable");
 
-
+            var i = tile.tileX;
+            var j = tile.tileY;
+            var backLayer = gameLocation.map.GetLayer("Back");
+            var isValidLayerLoc = backLayer.IsValidTileLocation(i, j);
+            if (isValidLayerLoc && backLayer.Tiles[i,j] != null)
+            {
+                backLayer.Tiles[i, j].Properties["TilemanTile"] = "Purchased";
+            }
             ThisLocationTiles.Remove(tile);
             tileList.Remove(tile);
+            var locationName = GetTileKey(gameLocation);
+            PurchaseRows rows = purchased_tiles_by_location.data.GetOrCreate(locationName);
+            PurchaseColumn col = rows.columns.GetOrCreate(tile.tileX);
+            col.purchasedCells.Add(tile.tileY);
 
         }
-        public void RemoveTileExceptions()
+        public void DEPRECATED_RemoveTileExceptions()
         {
-
             this.Monitor.Log("Removing Unusual Tiles", LogLevel.Debug);
 
             removeSpecificTile(18,27,"Desert");
 
             removeSpecificTile(12, 9, "BusStop");
-
-
-
-
         }
 
-        public void AddTileExceptions()
+        public void DEPRECATED_AddTileExceptions()
         {
-
             this.Monitor.Log("Placing Unusual Tiles", LogLevel.Debug);
 
             var tempName = "Town";
@@ -175,31 +222,19 @@ namespace Tileman
             tileDict[tempName].Add(new KaiTile(55, 106, tempName));
             tileDict[tempName].Add(new KaiTile(55, 107, tempName));
 
-
-
-
-
             //Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{tempName}.json", mapData);
 
             //
             //specific tiles to add in /// COPY ABOVE
             //Mountain 3X3 50,6 -> 52,8
-
-           
         }
 
         private void OnButtonPressed(object sender, ButtonPressedEventArgs e)
         {
-            
-
             // ignore if player hasn't loaded a save yet
             if (!Context.IsWorldReady) return;
-
-
             if (!Context.IsPlayerFree) return;
-
             if (Game1.player.isFakeEventActor) return;
-            
 
             if (e.Button == SButton.G)
             {
@@ -221,162 +256,105 @@ namespace Tileman
 
                 Monitor.Log($"Tileman Overlay Mode set to:{mode}", LogLevel.Debug);
                 Game1.playSoundPitched("coin", 1200);
-
-
             }
 
-
-
             if (!toggle_overlay) return;
-            
-
             if (e.Button.IsUseToolButton()) tool_button_pushed = true;
-
-
-            
-
-            
-
-
-
         }
 
         private void OnButtonReleased(object sender, ButtonReleasedEventArgs e)
         {
             if (e.Button.IsUseToolButton()) tool_button_pushed = false;
-
-
-
-
         }
 
         private void DayStartedUpdate(object sender, DayStartedEventArgs e)
         {
-
-            PlaceInMaps();
-            GetLocationTiles(Game1.currentLocation);
-            
-
-
-            //Game1.timeOfDay = 900;
-            //Game1.dayOfMonth = 14;
-            //Monitor.Log($"TIME OF DAY SET TO:{Game1.timeOfDay}",LogLevel.Debug);
-
-
-
-
-
-
-
+            this.Monitor.Log("Day started in " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
+            if (legacy)
+            {
+                DEPRECATED_PlaceInMaps();
+                DEPRECATED_GetLocationTiles(Game1.currentLocation);
+            }
+            else
+            {
+                FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
+            }
         }
 
         private void TitleReturnUpdate(object sender, ReturnedToTitleEventArgs e)
         {
             ResetValues();
-            
         }
 
         private void DrawUpdate(object sender, RenderedWorldEventArgs e)
         {
             if (!Context.IsWorldReady) return;
 
-
-
-            
-
             //Makes sure to not draw while a cutscene is happening
             if (Game1.CurrentEvent != null) {
                 if (!Game1.CurrentEvent.playerControlSequence)
                 {
                     return;
-
                 }
             }
 
             GroupIfLocationChange();
 
-
-            for (int i = 0; i < ThisLocationTiles.Count; i++)
+            var anyCollision = false;
+            if (toggle_overlay || do_collision)
             {
-                KaiTile t = ThisLocationTiles[i];
-                if (t.tileIsWhere == Game1.currentLocation.Name || Game1.currentLocation.Name == "Temp")
+                for (int i = 0; i < ThisLocationTiles.Count; i++)
                 {
+                    KaiTile t = ThisLocationTiles[i];
+                    if (!(t.tileIsWhere == Game1.currentLocation.Name || Game1.currentLocation.Name == "Temp"))
+                    {
+                        continue;
+                    }
                     if (toggle_overlay)
                     {
-                        var texture = tileTexture;
-                        var stringColor = Color.Gold;
-                        //Cursor
-                        if (overlay_mode == 1)
-                        {
-                                
-                            if (Game1.currentCursorTile == new Vector2(t.tileX,t.tileY))
-                            {
-                                texture = tileTexture2;
-
-                                    
-
-                                if (Game1.player.Money < (int)Math.Floor(tile_price))
-                                {
-                                    stringColor = Color.Red;
-                                    texture = tileTexture3;
-                                }
-
-                                e.SpriteBatch.DrawString(Game1.dialogueFont, $"${ (int)Math.Floor(tile_price)}",
-                                    new Vector2(Game1.getMousePosition().X, Game1.getMousePosition().Y - Game1.tileSize), stringColor);
-
-                            }
-                        }
-                        //Keyboard or Controller
-                        else
-                        {
-                            if (Game1.player.nextPositionTile().X == t.tileX && Game1.player.nextPositionTile().Y == t.tileY)
-                            {
-                                texture = tileTexture2;
-                                    
-                                if (Game1.player.Money < (int)Math.Floor(tile_price))
-                                {
-                                    texture = tileTexture3;
-                                    stringColor = Color.Red;
-
-                                }
-
-
-                                e.SpriteBatch.DrawString(Game1.dialogueFont, $"${ (int)Math.Floor(tile_price)}",
-                                    new Vector2((t.tileX) * 64 - Game1.viewport.X, (t.tileY) * 64 - 64 - Game1.viewport.Y), stringColor);
-
-
-
-
-                            }
-                        }
+                        Texture2D texture = tileTexture;
+                        DrawPrice(t, e, ref texture);
                         t.DrawTile(texture, e.SpriteBatch);
                     }
 
-
                     //Prevent player from being pushed out of bounds
-                    if (do_collision) PlayerCollisionCheck(t);
-                    //Monitor.Log($"{Game1.currentLocation.doesTileHavePropertyNoNull(t.tileX,t.tileY, "Diggable", "back")}", LogLevel.Debug);
-
+                    if (do_collision)
+                    {
+                        anyCollision |= PlayerCollisionCheck(t);
+                    }
                 }
-
-
-
-
+            }
+            if (do_collision && !anyCollision)
+            {
+                collisionTick = 0;
             }
 
-
-
-
-
-
-                if (tool_button_pushed) PurchaseTilePreCheck();
-
-            
-
-
-
+            if (tool_button_pushed) PurchaseTilePreCheck();
         }
 
+
+        private void DrawPrice(KaiTile t, RenderedWorldEventArgs e, ref Texture2D texture)
+        {
+            var stringColor = Color.Gold;
+            bool useCursor = overlay_mode == 1;
+            int targetX = useCursor ? (int)Math.Floor(Game1.currentCursorTile.X) : Game1.player.nextPositionTile().X;
+            int targetY = useCursor ? (int)Math.Floor(Game1.currentCursorTile.Y) : Game1.player.nextPositionTile().Y;
+            Vector2 textPosition = useCursor ? new Vector2(Game1.getMousePosition().X, Game1.getMousePosition().Y - Game1.tileSize)
+                                            : new Vector2((t.tileX) * 64 - Game1.viewport.X, (t.tileY) * 64 - 64 - Game1.viewport.Y);
+
+            if (targetX == t.tileX && targetY == t.tileY)
+            {
+                texture = tileTexture2;
+
+                if (Game1.player.Money < (int)Math.Floor(tile_price))
+                {
+                    stringColor = Color.Red;
+                    texture = tileTexture3;
+                }
+
+                e.SpriteBatch.DrawString(Game1.dialogueFont, $"${(int)Math.Floor(tile_price)}", textPosition, stringColor);
+            }
+        }
 
         private static IEnumerable<GameLocation> GetLocations()
         {
@@ -388,46 +366,21 @@ namespace Tileman
                     select building.indoors.Value
                 );
 
-            
-
             return locations;
-        }
-        
-
-
-        private bool IsTileAt(int tileX, int tileY, GameLocation TileIsAt)
-        {
-            foreach (KaiTile t in tileList)
-            {
-                if (tileX == t.tileX && tileY == t.tileY && TileIsAt == Game1.getLocationFromName(t.tileIsWhere))
-                {
-                    return true;
-                }
-
-            }
-            return false;
-
-
         }
 
         private void GetTilePrice()
         {
+            dynamic_tile_price = tile_price;
             switch (difficulty_mode)
             {
                 case 0:
-                    //Slowly increase tile cost over time // Change 0 for initial buffer
-                    if (purchase_count > 0) dynamic_tile_price += tile_price_raise;
+                    dynamic_tile_price = tile_price + (tile_price_raise * purchase_count);
                     break;
 
                 case 1:
-                    //Increase tile cost through milestones
-                    if (purchase_count > 1)      dynamic_tile_price = tile_price * 2;
-                    if (purchase_count > 10)     dynamic_tile_price = tile_price * 4;
-                    if (purchase_count > 100)    dynamic_tile_price = tile_price * 8;
-                    if (purchase_count > 1000)   dynamic_tile_price = tile_price * 16;
-                    if (purchase_count > 10000)  dynamic_tile_price = tile_price * 32;
-                    if (purchase_count > 100000) dynamic_tile_price = tile_price * 64;
-
+                    // Double the price for each digit in the purchase count
+                    dynamic_tile_price = tile_price * Math.Pow(2.0, purchase_count <= 1 ? 0 : ("" + (purchase_count - 1)).Length);
                     break;
 
                 case 2:
@@ -462,172 +415,46 @@ namespace Tileman
                         PurchaseTileCheck(t);
                     }
                 }
-
             }
-
         }
 
-        private void PurchaseTileCheck(KaiTile thisTile)
+        private void PurchaseTileCheck(KaiTile thisTile, bool free = false)
         {
+            GetTilePrice();
             int floor_price = (int)Math.Floor(dynamic_tile_price);
 
-            if (Game1.player.Money >= floor_price)
+
+            if (!free & Game1.player.Money < floor_price)
             {
-                
+                Game1.playSoundPitched("grunt", 700 + (100 * new Random().Next(0, 7)));
+                return;
+            }
+            if (!free)
+            {
                 Game1.player.Money -= floor_price;
-
-                GetTilePrice();
-                
-
-                tile_count--;
-                purchase_count++;
-
-                Game1.playSoundPitched("purchase", 700 + (100* new Random().Next(0, 7)) );
-
-                
-
-                var gameLocation = Game1.currentLocation;
-
-                gameLocation.removeTileProperty(thisTile.tileX, thisTile.tileY, "Back", "Buildable");
-                if (gameLocation.doesTileHavePropertyNoNull(thisTile.tileX, thisTile.tileY, "Type", "Back") == "Dirt"
-                        || gameLocation.doesTileHavePropertyNoNull(thisTile.tileX, thisTile.tileY, "Type", "Back") == "Grass") gameLocation.setTileProperty(thisTile.tileX, thisTile.tileY, "Back", "Diggable", "true");
-
-                gameLocation.removeTileProperty(thisTile.tileX, thisTile.tileY, "Back", "NoFurniture");
-                gameLocation.removeTileProperty(thisTile.tileX, thisTile.tileY, "Back", "NoSprinklers");
-
-                gameLocation.removeTileProperty(thisTile.tileX, thisTile.tileY, "Back", "Passable");
-                gameLocation.removeTileProperty(thisTile.tileX, thisTile.tileY, "Back", "Placeable");
-
-                ThisLocationTiles.Remove(thisTile);
-                tileList.Remove(thisTile);
-
-            }
-            else Game1.playSoundPitched("grunt", 700 + (100 * new Random().Next(0, 7)));
-
-
-
-
-
-        }
-
-        private void PlaceInMaps()
-        {
-            if (Context.IsWorldReady)
-            {
-
-
-
-                if (do_loop == true)
-                {
-
-
-                    var locationCount = 0;
-                    foreach (GameLocation location in GetLocations())
-                    {
-                        if (!tileDict.ContainsKey(location.Name))
-                        {
-
-                            Monitor.Log($"Placing Tiles in: {location.Name}", LogLevel.Debug);
-
-                            locationCount++;
-
-                            if (locationCount < amountLocations)
-                            {
-                                PlaceTiles(Game1.getLocationFromName(location.NameOrUniqueName));
-
-                            }
-                            else
-                            {
-                                break;
-                            }
-
-                            tileDict.Add(location.Name, tileList);
-                            tileList = new();
-                        }
-                    }
-
-                    
-                    //Place Tiles in the Mine // Mine 1-120 // Skull Caverns 121-???
-                    for (int i = 1; i <= 220 + caverns_extra; i++)
-
-                    {
-                        var mineString = Game1.getLocationFromName("UndergroundMine" + i).Name;
-
-                        if (!tileDict.ContainsKey(mineString))
-                        {
-
-                            if (Game1.getLocationFromName(mineString) != null)
-                            {
-                                PlaceTiles(Game1.getLocationFromName(mineString));
-                                Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
-
-                                tileDict.Add(mineString, tileList);
-                                tileList = new();
-                            }
-
-                        }
-                    }
-
-                    //VolcanoDungeon0 - 9
-                    for (int i = 0; i <= 9; i++)
-
-                    {
-                        var mineString = Game1.getLocationFromName("VolcanoDungeon" + i).Name;
-                        
-                        if (!tileDict.ContainsKey(mineString))
-                        {
-
-                            if (Game1.getLocationFromName(mineString) != null)
-                            {
-                                PlaceTiles(Game1.getLocationFromName(mineString));
-                                Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
-
-                                tileDict.Add(mineString, tileList);
-                                tileList = new();
-                            }
-                        }
-                    }
-
-                    AddTileExceptions();
-                    RemoveTileExceptions();
-                
-
-                    do_loop = false;
-
-                    //Save all the created files
-                    foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
-                    {
-                        SaveLocationTiles(Game1.getLocationFromName(entry.Key));
-                    }
-                    tileDict.Clear();
-
-                    Monitor.Log("Press 'G' to toggle Tileman Overlay", LogLevel.Debug);
-                    Monitor.Log("Press 'H' to switch between Overlay Modes", LogLevel.Debug);
-
-
-                }
             }
 
+            purchase_count++;
+
+            Game1.playSoundPitched("purchase", 700 + (100* new Random().Next(0, 7)) );
+            
+            RemoveProperties(thisTile, Game1.currentLocation);
         }
+
 
         private void PlaceInTempArea(GameLocation gameLocation)
         {
             Monitor.Log($"Placing Tiles in Temporary Area: {Game1.whereIsTodaysFest}", LogLevel.Debug);
-
             
             PlaceTiles(gameLocation);
             ThisLocationTiles = tileList;
             tileList = new();
-
-
         }
 
         private void PlaceTiles(GameLocation mapLocation)
         {
-
             int mapWidth = mapLocation.map.Layers[0].LayerWidth;
             int mapHeight = mapLocation.map.Layers[0].LayerHeight;
-
 
             for (int i = 1; i < mapWidth - 1; i++)
             {
@@ -644,21 +471,14 @@ namespace Tileman
 
                         )
                     {
-                        if (new Vector2(Game1.player.position.X, Game1.player.position.Y)!= new Vector2(i, j))
+                        if (new Vector2(Game1.player.position.X, Game1.player.position.Y) != new Vector2(i, j))
                         {
                             var t = new KaiTile(i, j, mapLocation.Name);
                             tileList.Add(t);
-
-                            tile_count++;
                         }
                     }
                 }
             }
-
-
-            
-            
-
         }
 
 
@@ -669,93 +489,450 @@ namespace Tileman
             {
                 if (Game1.locationRequest.Location != Game1.currentLocation && !location_changed)
                 {
-                    locationDelay = 35;
+                    locationDelay = 3;
                     location_changed = true;
 
-                    if (Game1.currentLocation.Name == "Temp") {
-                        SaveLocationTiles(Game1.currentLocation);
+                    if (Game1.currentLocation.Name == "Temp")
+                    {
+                        if (legacy)
+                        {
+                            SaveLocationTiles(Game1.currentLocation);
+                        }
+                        else
+                        {
+                            SavePurchaseManifest();
+                        }
                     }
-
                 }
-                
             }
             else if (location_changed)
             {
                 if (locationDelay <= 0)
                 {
-                    //First encounter with specific Temp area
-                    if(Game1.currentLocation.Name == "Temp") 
-                    { 
-                        if (Helper.Data.ReadJsonFile<MapData>($"jsons/" +
-                            $"{Constants.SaveFolderName}/" +
-                            $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
+                    location_changed = false;
+                    if (legacy)
+                    {
+                        //First encounter with specific Temp area
+                        if (Game1.currentLocation.Name == "Temp" && Helper.Data.ReadJsonFile<MapData>($"jsons/" +
+                                $"{Constants.SaveFolderName}/" +
+                                $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
                         {
                             PlaceInTempArea(Game1.currentLocation);
-                        }else
+                        }
+                        else
                         {
                             Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
-                            GetLocationTiles(Game1.currentLocation);
- 
+                            DEPRECATED_GetLocationTiles(Game1.currentLocation);
                         }
-                        location_changed = false;
                     }
                     else
                     {
-
-                        Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
-                        GetLocationTiles(Game1.currentLocation);
-
-                        location_changed = false;
+                        FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
                     }
-                    
                 }
-
                 locationDelay--;
-
+            }
+        }
+        private bool IsTilePurchased(GameLocation location, int tileX, int tileY)
+        {
+            var locationName = GetTileKey(location);
+            if (!purchased_tiles_by_location.data.ContainsKey(locationName))
+            {
+                return false;
+            }
+            if (!purchased_tiles_by_location.data[locationName].columns.ContainsKey(tileX))
+            {
+                return false;
             }
 
-
+            PurchaseColumn column = purchased_tiles_by_location.data[locationName].columns[tileX];
+            return column.purchasedCells.Contains(tileY);
         }
+
+        private bool IsSpecificallyIncluded(GameLocation gameLocation, int tileX, int tileY)
+        {
+            if (IsTempLocation(gameLocation))
+            {
+                return specificInclusionsInTempLocation.Contains(new Vector2(tileX, tileY));
+            }
+            return false;
+        }
+
+        private bool IsSpecificallyExcluded(GameLocation gameLocation, int tileX, int tileY)
+        {
+            var locationName = GetTileKey(gameLocation);
+
+            if (locationName == "Desert")
+            {
+                return tileX == 18 && tileY == 27;
+            }
+
+            if (locationName == "BusStop")
+            {
+                return tileX == 12 && tileY == 9;
+            }
+            return false;
+        }
+
+        private void FillLocationAndRemovePurchasedTiles(GameLocation gameLocation)
+        {
+            this.Monitor.Log("Filling location: " + GetTileKey(gameLocation), LogLevel.Debug);
+            int mapWidth = gameLocation.map.Layers[0].LayerWidth;
+            int mapHeight = gameLocation.map.Layers[0].LayerHeight;
+
+            ThisLocationTiles = new();
+
+
+            var playerPos = new Vector2(Game1.player.position.X, Game1.player.position.Y);
+            for (int i = 1; i < mapWidth - 1; i++)
+            {
+                for (int j = 1; j < mapHeight - 1; j++)
+                {
+                    bool isSpecificallyIncluded = IsSpecificallyIncluded(gameLocation, i, j);
+                    bool isSpecificallyExcluded = IsSpecificallyExcluded(gameLocation, i, j);
+                    if (isSpecificallyExcluded)
+                    {
+                        continue;
+                    }
+                    if (IsTilePurchased(gameLocation, i, j))
+                    {
+                        continue;
+                    }
+                    var backLayer = gameLocation.map.GetLayer("Back");
+                    var isValidLayerLoc = backLayer.IsValidTileLocation(i, j);
+                    var hasTilemanProperty = isValidLayerLoc && backLayer.Tiles[i,j] != null && backLayer.Tiles[i, j].Properties.ContainsKey("TilemanTile") && backLayer.Tiles[i, j].Properties["TilemanTile"] == "Unpurchased";
+                    if (isSpecificallyIncluded 
+                        || hasTilemanProperty
+                        || (
+                            !gameLocation.isObjectAtTile(i, j)
+                            && !gameLocation.isOpenWater(i, j)
+                            && !gameLocation.isTerrainFeatureAt(i, j)
+                            && gameLocation.isTilePlaceable(new Vector2(i, j))
+                            && gameLocation.isTileLocationTotallyClearAndPlaceable(new Vector2(i, j))
+                            && gameLocation.Map.Layers[0].IsValidTileLocation(i, j)
+                            && gameLocation.isCharacterAtTile(new Vector2(i, j)) == null
+                            && playerPos != new Vector2(i, j)))
+                    {
+                        var t = new KaiTile(i, j, gameLocation.Name);
+                        ThisLocationTiles.Add(t);
+                        if (isValidLayerLoc && backLayer.Tiles[i, j] != null)
+                        {
+                            backLayer.Tiles[i, j].Properties["TilemanTile"] = "Unpurchased";
+                        }
+                        if (!allow_player_placement)
+                        {
+                            gameLocation.removeTileProperty(t.tileX, t.tileY, "Back", "Diggable");
+
+                            gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "Buildable", "false");
+                            gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "NoFurniture", "true");
+                            gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "NoSprinklers", "");
+                            gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "Placeable", "");
+
+
+                        }
+                    }
+                }
+            }
+        }
+
         private void SaveLocationTiles(GameLocation gameLocation)
         {
-
             var locationName = gameLocation.Name;
 
             if (locationName == "Temp") locationName += Game1.whereIsTodaysFest;
             Monitor.Log($"Saving in {locationName}", LogLevel.Debug);
 
-
             var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json") ?? new MapData();
 
-
-
             if (gameLocation.Name == "Temp")
-            { tileData.AllKaiTilesList = ThisLocationTiles; }
+            {
+                tileData.AllKaiTilesList = ThisLocationTiles;
+            }
             else
             {
                 tileData.AllKaiTilesList = tileDict[locationName];
             }
             Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json", tileData);
-            
         }
-        private void GetLocationTiles(GameLocation gameLocation)
+
+
+        private bool IsTempLocation(GameLocation gameLocation)
+        {
+            return gameLocation.Name == "Temp";
+        }
+
+        private string GetTileKey(GameLocation gameLocation)
         {
             var locationName = gameLocation.Name;
-
             if (locationName == "Temp") locationName += Game1.whereIsTodaysFest;
+            return locationName;
+
+        }
+        private void ResetValues()
+        {
+            this.Monitor.Log("Resetting values", LogLevel.Debug);
+            do_loop = true;
+            toggle_overlay = true;
+            do_collision = true;
+
+            tile_price = 1.0;
+            tile_price_raise = 0.20;
+            purchase_count = 0;
+
+            tileList.Clear();
+            ThisLocationTiles.Clear();
+
+            tileDict.Clear();
+        }
+
+        private bool PlayerCollisionCheck(KaiTile tile)
+        {
+
+            if (!(Game1.getLocationFromName(tile.tileIsWhere) == Game1.currentLocation || Game1.currentLocation.Name == "Temp"))
+            {
+                return false;
+            }
+            Rectangle tileBox = new(tile.tileX * 64, tile.tileY * 64, tile.tileW, tile.tileH);
+            Rectangle playerBox = Game1.player.GetBoundingBox();
+
+            var collided = false;
+            if (playerBox.Intersects(tileBox))
+            {
+                collided = true;
+                Rectangle.Intersect(ref playerBox, ref tileBox, out Rectangle intersection);
+                Point directionToMove = playerBox.Center - tileBox.Center;
+                bool moveX = Math.Abs(directionToMove.X) > Math.Abs(directionToMove.Y);
+                if (moveX)
+                {
+                    bool moveLeft = Math.Sign(directionToMove.X) <= 0;
+                    Game1.player.Position += new Vector2(moveLeft ? -1 * intersection.Width : intersection.Width, 0);
+                }
+                else
+                {
+                    bool moveUp = Math.Sign(directionToMove.Y) <= 0;
+                    Game1.player.Position += new Vector2(0, moveUp ? -1 * intersection.Height : intersection.Height);
+                }
+                collisionTick++;
+            }
+            if (playerBox.Center == tileBox.Center || playerBox.Intersects(tileBox) && locationDelay > 0)
+            {
+                collided = true;
+                Game1.player.Position = Game1.player.lastPosition;
+                collisionTick++;
+            }
+            if (collisionTick > 120)
+            {
+                collisionTick = 0;
+                PurchaseTileCheck(tile, true);
+            }
+            return collided;
+        }
+
+        private void SaveModData(object sender, SavedEventArgs e)
+        {
+            if (legacy)
+            {
+                foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
+                {
+                    SaveLocationTiles(Game1.getLocationFromName(entry.Key));
+                }
+                tileDict.Clear();
+            }
+            else
+            {
+                SavePurchaseManifest();
+            }
+
+            var tileData = new ModData
+            {
+                ToPlaceTiles   = do_loop,
+                DoCollision    = do_collision,
+                ToggleOverlay  = toggle_overlay,
+                TilePrice      = tile_price,
+                TilePriceRaise = tile_price_raise,
+                CavernsExtra   = caverns_extra,
+                DifficultyMode = difficulty_mode,
+                PurchaseCount  = purchase_count,
+                Legacy         = legacy
+            };
+
+            Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
+        }
+
+        private void LoadModData(object sender, SaveLoadedEventArgs e)
+        {
+            var d = new ModData(); // defaultData
+            d.ToPlaceTiles = do_loop;
+            d.ToggleOverlay = toggle_overlay;
+            d.DoCollision = do_collision;
+            d.TilePrice = tile_price;
+            d.TilePriceRaise = tile_price_raise;
+            d.CavernsExtra = caverns_extra;
+            d.DifficultyMode = difficulty_mode;
+            d.PurchaseCount = purchase_count;
+            d.Legacy = legacy;
+
+            var tileData = Helper.Data.ReadJsonFile<ModData>("config.json") ?? d;
+
+            //Load config Information
+            if (Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json") != null)
+            {
+                tileData = Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json") ?? d;
+            }
+            else
+            {
+                Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
+            }
+
+            var manifestFile = $"jsons/{Constants.SaveFolderName}/purchaseManifest.json";
+            var purchaseFile = Helper.Data.ReadJsonFile<PurchaseManifestFile>(manifestFile) ?? new();
+            Helper.Data.WriteJsonFile(manifestFile, purchaseFile);
+            purchased_tiles_by_location = purchaseFile.purchaseData;
+
+            do_loop = tileData.ToPlaceTiles;
+            toggle_overlay = tileData.ToggleOverlay;
+            do_collision = tileData.DoCollision;
+            tile_price = tileData.TilePrice;
+            tile_price_raise = tileData.TilePriceRaise;
+            caverns_extra = tileData.CavernsExtra;
+            difficulty_mode = tileData.DifficultyMode;
+            purchase_count = tileData.PurchaseCount;
+            legacy = tileData.Legacy;
+        }
+
+        public void SavePurchaseManifest()
+        {
+            var manifestFilePath = $"jsons/{Constants.SaveFolderName}/purchaseManifest.json";
+            PurchaseManifestFile purchaseFile = new();
+            purchaseFile.purchaseData = purchased_tiles_by_location;
+            Helper.Data.WriteJsonFile(manifestFilePath, purchaseFile);
+        }
+
+        public void createJson(string fileName)
+        {
+            Monitor.Log($"Creating {fileName}.json", LogLevel.Debug);
+            System.IO.File.Create($"jsons/{fileName}.json");
+        }
+
+        // --------------------------------------- DEPRECATED FUNCTIONS -------------------------------- //
+
+        private void DEPRECATED_PlaceInMaps()
+        {
+            if (!Context.IsWorldReady)
+            {
+                this.Monitor.Log("Tried to place tiles, but world wasn't ready", LogLevel.Warn);
+                return;
+            }
+            if (!do_loop)
+            {
+                this.Monitor.Log("Tried to place tiles, but do_loop wasn't set", LogLevel.Debug);
+                return;
+            }
+            if (!legacy)
+            {
+                this.Monitor.Log("Tried to place tiles, but that's the Old Way", LogLevel.Debug);
+                return;
+            }
+            var locationCount = 0;
+            foreach (GameLocation location in GetLocations())
+            {
+                if (!tileDict.ContainsKey(location.Name))
+                {
+                    Monitor.Log($"Placing Tiles in: {location.Name}", LogLevel.Debug);
+
+                    locationCount++;
+
+                    if (locationCount < amountLocations)
+                    {
+                        PlaceTiles(Game1.getLocationFromName(location.NameOrUniqueName));
+
+                    }
+                    else
+                    {
+                        break;
+                    }
+
+                    tileDict.Add(location.Name, tileList);
+                    tileList = new();
+                }
+            }
+
+
+            //Place Tiles in the Mine // Mine 1-120 // Skull Caverns 121-???
+            for (int i = 1; i <= 220 + caverns_extra; i++)
+
+            {
+                var mineString = Game1.getLocationFromName("UndergroundMine" + i).Name;
+
+                if (!tileDict.ContainsKey(mineString))
+                {
+
+                    if (Game1.getLocationFromName(mineString) != null)
+                    {
+                        PlaceTiles(Game1.getLocationFromName(mineString));
+                        Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
+
+                        tileDict.Add(mineString, tileList);
+                        tileList = new();
+                    }
+
+                }
+            }
+
+            //VolcanoDungeon0 - 9
+            for (int i = 0; i <= 9; i++)
+
+            {
+                var mineString = Game1.getLocationFromName("VolcanoDungeon" + i).Name;
+
+                if (!tileDict.ContainsKey(mineString))
+                {
+
+                    if (Game1.getLocationFromName(mineString) != null)
+                    {
+                        PlaceTiles(Game1.getLocationFromName(mineString));
+                        Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
+
+                        tileDict.Add(mineString, tileList);
+                        tileList = new();
+                    }
+                }
+            }
+
+            DEPRECATED_AddTileExceptions();
+            DEPRECATED_RemoveTileExceptions();
+
+
+            do_loop = false;
+
+            //Save all the created files
+            foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
+            {
+                SaveLocationTiles(Game1.getLocationFromName(entry.Key));
+            }
+            tileDict.Clear();
+
+            Monitor.Log("Press 'G' to toggle Tileman Overlay", LogLevel.Debug);
+            Monitor.Log("Press 'H' to switch between Overlay Modes", LogLevel.Debug);
+        }
+
+        private void DEPRECATED_GetLocationTiles(GameLocation gameLocation)
+        {
+            this.Monitor.Log("Getting tiles for " + GetTileKey(gameLocation), LogLevel.Debug);
+            var locationName = GetTileKey(gameLocation);
 
             if (tileDict.ContainsKey(locationName))
             {
                 ThisLocationTiles = tileDict[locationName];
             }
-            else 
-            { 
+            else
+            {
                 var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json") ?? new MapData();
-                if(tileData.AllKaiTilesList.Count > 0) ThisLocationTiles = tileData.AllKaiTilesList;
-                if(gameLocation.Name != "Temp")tileDict.Add(locationName, ThisLocationTiles);
+                if (tileData.AllKaiTilesList.Count > 0) ThisLocationTiles = tileData.AllKaiTilesList;
+                if (!IsTempLocation(gameLocation)) tileDict.Add(locationName, ThisLocationTiles);
             }
 
-            if (gameLocation.Name != "Temp")
+            if (!IsTempLocation(gameLocation))
             {
                 for (int i = 0; i < ThisLocationTiles.Count; i++)
                 {
@@ -770,302 +947,8 @@ namespace Tileman
                         gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "NoSprinklers", "");
                         gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "Placeable", "");
                     }
-                    //if (do_collision) gameLocation.setTileProperty(t.tileX, t.tileY, "Back", "Passable", "");
-
-
-
                 }
             }
-
         }
-
-       
-        private void ResetValues()
-        {
-            do_loop = true;
-            toggle_overlay = true;
-            do_collision = true;
-
-            tile_price = 1.0;
-            tile_price_raise = 0.20;
-            purchase_count = 0;
-            tile_count = 0;
-
-            tileList.Clear();
-            ThisLocationTiles.Clear();
-
-            tileDict.Clear();
-
-
-
-
     }
-
-
-
-        public int CalculateTileSum(int tileCount = 50000, double price = 1.0, double priceIncrease = 0.0008)
-        {
-            var totalCost = 0;
-            switch (difficulty_mode) {
-                case 0:
-                                       
-
-                    for (int i = 0; i < tileCount; i++)
-                    {
-                        totalCost += (int)Math.Floor(price);
-                        price += priceIncrease;
-
-                    }
-                    break;
-
-                case 1:
-                    price = tile_price;
-
-
-                    for (int i = 0; i < tileCount; i++) 
-                    {
-                        totalCost += (int)price;
-                        if (purchase_count > 10) price = 2.0;
-                        if (purchase_count > 100) price = 3.0;
-                        if (purchase_count > 1000) price = 4.0;
-                        if (purchase_count > 10000) price = 5.0;
-
-                    }
-
-                    break;
-
-                case 2:
-                    price = tile_price;
-
-
-                    for (int i = 0; i < tileCount; i++)
-                    {
-                        totalCost += (int)price;
-                        if (purchase_count > 10) price = 2.0;
-                        if (purchase_count > 100) price = 3.0;
-                        if (purchase_count > 1000) price = 4.0;
-                        if (purchase_count > 10000) price = 5.0;
-
-                    }
-
-                    break;
-            }
-            this.Monitor.Log($"Cost of {tileCount} tiles by the end: {totalCost}", LogLevel.Debug);
-
-            return totalCost;
-        }
-
-        public void BuyAllTilesInLocation(GameLocation gameLocation)
-        {
-            var tileData = this.Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{gameLocation}.json") ?? new MapData();
-            tileList = tileData.AllKaiTilesList;
-
-            if (CalculateTileSum(tileList.Count) <= Game1.player.Money)
-            {
-                for (int i = 0; i < tileList.Count; i++)
-                {
-                    PurchaseTileCheck(tileList[i]);
-                }
-
-
-                var mapData = new MapData
-                {
-                    AllKaiTilesList = tileList,
-                };
-
-
-
-                Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{gameLocation}.json", mapData);
-                tileList=new();
-            }
-
-        }
-
-        private void PlayerCollisionCheck(KaiTile tile)
-        {
-
-            if (Game1.getLocationFromName(tile.tileIsWhere) == Game1.currentLocation || Game1.currentLocation.Name == "Temp")
-            {
-                
-
-                Rectangle tileBox = new(tile.tileX * 64, tile.tileY * 64, tile.tileW, tile.tileH);
-                Rectangle playerBox = Game1.player.GetBoundingBox();
-                
-                if (playerBox.Intersects(tileBox))
-                {
-                    if (collisionTick > 120)
-                    {
-                        Game1.player.Money += (int)tile_price;
-                        collisionTick = 0;
-                        PurchaseTileCheck(tile);
-
-                    }
-
-                    var xDist  = playerBox.Right  - tileBox.Left;
-                    var xDist2 = tileBox.Right    - playerBox.Left;
-                    var yDist  = playerBox.Bottom - tileBox.Top;
-                    var yDist2 = tileBox.Bottom   - playerBox.Top;
-                    var xOffset = 0;
-
-                    if (Game1.player.movementDirections.Count > 1
-                    && (Game1.player.movementDirections[0] == 3 || Game1.player.movementDirections[1] == 3)) xOffset = 20;
-
-                    if (Math.Abs(xDist - xDist2) >= Math.Abs(yDist - yDist2) + xOffset)
-                    {
-                        if (xDist >= xDist2)
-                        {
-
-                            var newPos = new Vector2(Game1.player.Position.X + xDist2, Game1.player.Position.Y);
-                            Game1.player.Position = newPos;
-
-                        }
-                        //Collide from Right
-                        else
-                        {
-
-                            var newPos = new Vector2(Game1.player.Position.X - xDist, Game1.player.Position.Y);
-                            Game1.player.Position = newPos;
-
-                        }
-                    }
-                    else {
-                        //Collide from Top
-                        if (yDist >= yDist2)
-                            {
-
-                                var newPos = new Vector2(Game1.player.Position.X, Game1.player.Position.Y + yDist2);
-                                Game1.player.Position = newPos;
-
-                            }
-                            //Collide from Bottom
-                            else
-                            {
-
-                                var newPos = new Vector2(Game1.player.Position.X, Game1.player.Position.Y - yDist);
-                                Game1.player.Position = newPos;
-
-                            }
-                        }
-                                          
-                        
-
-                        
-                            
-                    collisionTick++;
-
-                }
-                if (playerBox.Center == tileBox.Center || playerBox.Intersects(tileBox) && locationDelay > 0)
-                {
-                    if (collisionTick > 120)
-                    {
-                        Game1.player.Money += (int)tile_price;
-                        collisionTick = 0;
-                        PurchaseTileCheck(tile);
-
-                    }
-                    Game1.player.Position = Game1.player.lastPosition;
-                    collisionTick++;
-
-
-                }
-                
-
-                
-
-            }
-
-        }
-
-        
-
-        private void SaveModData(object sender, SavedEventArgs e) {
-
-
-            foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
-            { 
-                SaveLocationTiles(Game1.getLocationFromName(entry.Key));
-            }
-            tileDict.Clear();
-
-            var tileData = new ModData
-            {
-                ToPlaceTiles   = do_loop,
-                DoCollision    = do_collision,
-                ToggleOverlay  = toggle_overlay,
-                TilePrice      = tile_price,
-                TilePriceRaise = tile_price_raise,
-                CavernsExtra   = caverns_extra,
-                DifficultyMode = difficulty_mode,
-                PurchaseCount  = purchase_count
-            };
-
-            Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
-        }
-
-        private void LoadModData(object sender, SaveLoadedEventArgs e)
-        {
-
-
-            var tileData = Helper.Data.ReadJsonFile<ModData>("config.json") ?? new ModData();
-            
-            //Load config Information
-            if (Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json") != null)
-            {
-                tileData = Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json") ?? new ModData();
-
-            }
-            else
-            {
-                Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
-            }
-
-
-            do_loop = tileData.ToPlaceTiles;
-            toggle_overlay = tileData.ToggleOverlay;
-            do_collision = tileData.DoCollision;
-            tile_price = tileData.TilePrice;
-            tile_price_raise = tileData.TilePriceRaise;
-            caverns_extra = tileData.CavernsExtra;
-            difficulty_mode = tileData.DifficultyMode;
-            purchase_count = tileData.PurchaseCount;
-
-            //
-            //Load Individual Location Information
-
-            System.IO.DirectoryInfo root = new($"{Constants.GamePath}/Mods/Tileman/jsons/{Constants.SaveFolderName}");
-
-            System.IO.FileInfo[] files = root.GetFiles();
-            /*foreach (System.IO.FileInfo file in files)
-            {
-                //Note, file.Name has a '.json' at the end, which messes things up with dictionary keys
-                var fileName = System.IO.Path.GetFileNameWithoutExtension($"{Constants.GamePath}/Mods/Tileman/jsons/{Constants.SaveFolderName}/{file.Name}");
-
-                if (fileName != "config")
-                {
-                    
-                    var fileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{fileName}.json") ?? new MapData();
-                    tileDict.Add(fileName, fileData.AllKaiTilesList);
-
-                }
-
-            }*/
-
-            Monitor.Log("Mod Data Loaded", LogLevel.Debug);
-
-        }
-
-        public void createJson(string fileName)
-        {
-            Monitor.Log($"Creating {fileName}.json", LogLevel.Debug);
-            System.IO.File.Create($"jsons/{fileName}.json");
-        }
-
-
-
-
-
-
-    }
-
-
 }

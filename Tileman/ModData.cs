@@ -23,5 +23,7 @@ namespace Tileman
 
         public int PurchaseCount { get; set; }
 
+        public bool Legacy { get; set; } = true;
+
     }
 }
