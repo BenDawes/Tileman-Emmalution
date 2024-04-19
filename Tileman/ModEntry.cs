@@ -80,9 +80,10 @@ namespace Tileman
         PurchaseData purchased_tiles_by_location = new();
 
 
-        Texture2D tileTexture  = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
-        Texture2D tileTexture2 = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
-        Texture2D tileTexture3 = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
+        Texture2D tex_baseTile  = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
+        Texture2D tex_purchaseTile = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
+        Texture2D tex_insufficientFundsTile = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
+        Texture2D tex_distantTile = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
 
         private bool legacy = true; // Pre-spicykai fork
 
@@ -125,9 +126,10 @@ namespace Tileman
             helper.Events.GameLoop.DayStarted += this.DayStartedUpdate;
             helper.Events.GameLoop.ReturnedToTitle += this.TitleReturnUpdate;
 
-            tileTexture = helper.ModContent.Load<Texture2D>("assets/tile.png");
-            tileTexture2 = helper.ModContent.Load<Texture2D>("assets/tile_2.png");
-            tileTexture3 = helper.ModContent.Load<Texture2D>("assets/tile_3.png");
+            tex_baseTile = helper.ModContent.Load<Texture2D>("assets/tile.png");
+            tex_purchaseTile = helper.ModContent.Load<Texture2D>("assets/tile_2.png");
+            tex_insufficientFundsTile = helper.ModContent.Load<Texture2D>("assets/tile_3.png");
+            tex_distantTile = helper.ModContent.Load<Texture2D>("assets/tile_4.png");
         }
 
         private void removeSpecificTile(int xTile, int yTile, string gameLocation)
@@ -238,6 +240,10 @@ namespace Tileman
             if (!Context.IsPlayerFree) return;
             if (Game1.player.isFakeEventActor) return;
 
+            if(e.Button == SButton.T)
+            {
+                Game1.warpFarmer("UndergroundMine113", 13, 20, 2);
+            }
             if (e.Button == SButton.G)
             {
                 toggle_overlay = !toggle_overlay;
@@ -314,7 +320,7 @@ namespace Tileman
                     }
                     if (toggle_overlay)
                     {
-                        Texture2D texture = tileTexture;
+                        Texture2D texture = tex_baseTile;
                         DrawPrice(t, e, ref texture);
                         t.DrawTile(texture, e.SpriteBatch);
                     }
@@ -346,12 +352,12 @@ namespace Tileman
 
             if (targetX == t.tileX && targetY == t.tileY)
             {
-                texture = tileTexture2;
+                texture = tex_purchaseTile;
 
                 if (Game1.player.Money < (int)Math.Floor(tile_price))
                 {
                     stringColor = Color.Red;
-                    texture = tileTexture3;
+                    texture = tex_insufficientFundsTile;
                 }
 
                 e.SpriteBatch.DrawString(Game1.dialogueFont, $"${(int)Math.Floor(tile_price)}", textPosition, stringColor);
@@ -443,47 +449,6 @@ namespace Tileman
             RemoveProperties(thisTile, Game1.currentLocation);
         }
 
-
-        private void PlaceInTempArea(GameLocation gameLocation)
-        {
-            Monitor.Log($"Placing Tiles in Temporary Area: {Game1.whereIsTodaysFest}", LogLevel.Debug);
-            
-            PlaceTiles(gameLocation);
-            ThisLocationTiles = tileList;
-            tileList = new();
-        }
-
-        private void PlaceTiles(GameLocation mapLocation)
-        {
-            int mapWidth = mapLocation.map.Layers[0].LayerWidth;
-            int mapHeight = mapLocation.map.Layers[0].LayerHeight;
-
-            for (int i = 1; i < mapWidth - 1; i++)
-            {
-                for (int j = 1; j < mapHeight - 1; j++)
-                {
-                    if (/*!IsTileAt(i, j, mapLocation)
-                        &&*/ !mapLocation.isObjectAtTile(i, j) 
-                        && !mapLocation.isOpenWater(i, j) 
-                        && !mapLocation.isTerrainFeatureAt(i, j) 
-                        && mapLocation.isTilePlaceable(new Vector2(i, j))
-                        && mapLocation.isTileLocationTotallyClearAndPlaceable(new Vector2(i, j))
-                        && mapLocation.Map.Layers[0].IsValidTileLocation(i,j) 
-                        && mapLocation.isCharacterAtTile(new Vector2(i,j)) == null
-
-                        )
-                    {
-                        if (new Vector2(Game1.player.position.X, Game1.player.position.Y) != new Vector2(i, j))
-                        {
-                            var t = new KaiTile(i, j, mapLocation.Name);
-                            tileList.Add(t);
-                        }
-                    }
-                }
-            }
-        }
-
-
         private void GroupIfLocationChange()
 
         {
@@ -516,7 +481,7 @@ namespace Tileman
                         $"{Constants.SaveFolderName}/" +
                         $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
                 {
-                    PlaceInTempArea(Game1.currentLocation);
+                    DEPRECATED_PlaceInTempArea(Game1.currentLocation);
                 }
                 else
                 {
@@ -797,6 +762,128 @@ namespace Tileman
             purchase_count = tileData.PurchaseCount;
             legacy = tileData.Legacy;
             location_transition_time = tileData.LocationTransitionTime;
+
+
+            var hasOldLocationFiles = Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/Farm.json") != null;
+            if (!legacy && hasOldLocationFiles)
+            {
+                MigrateModDataFromLegacySystem();
+            }
+
+        }
+
+        private void MigrateRegion(string locationName, GameLocation gameLocation)
+        {
+            this.Monitor.Log("Migrating file " + locationName, LogLevel.Debug);
+            var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json");
+            if (tileData == null)
+            {
+                return;
+            }
+
+            var purchaseDataForRegion = purchased_tiles_by_location.data.GetOrCreate(locationName);
+
+            // Used to use gameLocation.map.Layers[0].LayerWidth, but this covers the case where a legacy map was smaller than the new version. MAx width/height observed was 135x120
+
+            int lookupWidth = 200;
+            int lookupHeight = 200;
+
+            bool[,] tilesInFile = new bool[lookupWidth + 1, lookupHeight + 1];
+            
+
+            for (int i = 0; i <= lookupWidth; i++)
+            {
+                for (int j = 0; j <= lookupHeight; j++)
+                {
+                    tilesInFile[i, j] = false;
+                }
+            }
+
+            int mapWidth = gameLocation.map.Layers[0].LayerWidth;
+            int mapHeight = gameLocation.map.Layers[0].LayerHeight;
+
+            foreach (KaiTile tile in tileData.AllKaiTilesList)
+            {
+                if (tile.tileX < 0 || tile.tileX >= lookupWidth || tile.tileY < 0 || tile.tileY >= lookupHeight)
+                {
+                    var error = "Tile at " + tile.tileX + ", " + tile.tileY + " was out of bounds for map of size [" + lookupWidth + ", " + lookupHeight + "]";
+                    this.Monitor.Log(error, LogLevel.Error);
+                }
+                tilesInFile[tile.tileX, tile.tileY] = true;
+            }
+
+            for (int i = 1; i < mapWidth - 1; i++)
+            {
+                for (int j = 1; j < mapHeight - 1; j++)
+                {
+                    var shouldHaveBeenATile = !gameLocation.isObjectAtTile(i, j)
+                        && !gameLocation.isOpenWater(i, j)
+                        && !gameLocation.isTerrainFeatureAt(i, j)
+                        && gameLocation.isTilePlaceable(new Vector2(i, j))
+                        && gameLocation.isTileLocationTotallyClearAndPlaceable(new Vector2(i, j))
+                        && gameLocation.Map.Layers[0].IsValidTileLocation(i, j)
+                        && gameLocation.isCharacterAtTile(new Vector2(i, j)) == null;
+                    if (shouldHaveBeenATile && !tilesInFile[i,j])
+                    {
+                        var column = purchaseDataForRegion.columns.GetOrCreate(i);
+                        column.purchasedCells.Add(j);
+                    }
+                }
+            }
+            SavePurchaseManifest();
+        }
+
+        private void MigrateModDataFromLegacySystem()
+        {
+            this.Monitor.Log("HELLO! Welcome to the Automated Tileman Legacy Automated Switcheroo system. This ATLAS system will take your old mod files, migrate them to the new system, and store them away in case it went wrong.", LogLevel.Warn);
+            this.Monitor.Log("This may take some time, sorry. When its done, the old files will now be in a folder in your mod save called LegacyBackup. Just... in case", LogLevel.Warn);
+
+            var allFileNames = new List<string>();
+            
+            foreach (GameLocation location in GetLocations())
+            {
+                var filename = GetTileKey(location);
+                MigrateRegion(filename, location);
+                allFileNames.Add(filename);
+            }
+
+            for (int i = 1; i <= 220 + caverns_extra; i++)
+            {
+                var gameLocation = Game1.getLocationFromName("UndergroundMine" + i);
+                var locationName = gameLocation.Name;
+                MigrateRegion(locationName, gameLocation);
+                allFileNames.Add(locationName);
+            }
+
+            //VolcanoDungeon0 - 9
+            for (int i = 0; i <= 9; i++)
+            {
+                var gameLocation = Game1.getLocationFromName("VolcanoDungeon" + i);
+                var locationName = gameLocation.Name;
+                MigrateRegion(locationName, gameLocation);
+                allFileNames.Add(locationName);
+            }
+
+            System.IO.DirectoryInfo root = new($"{Constants.GamePath}/Mods/Tileman/jsons/{Constants.SaveFolderName}");
+
+            System.IO.FileInfo[] files = root.GetFiles();
+            foreach (System.IO.FileInfo file in files)
+            {
+                if (file.Name.StartsWith("Temp") && file.Name.EndsWith(".json"))
+                {
+                    var filename = System.IO.Path.GetFileNameWithoutExtension(file.Name);
+                    var regionName = filename.Substring(4);
+                    var gameLocation = Game1.getLocationFromName(regionName);
+                    MigrateRegion(filename, gameLocation);
+                    allFileNames.Add(filename);
+                }
+            }
+
+            System.IO.Directory.CreateDirectory($"{root}/LegacyBackup");
+            foreach (var file in allFileNames)
+            {
+                System.IO.File.Move($"{root}/{file}.json", $"{root}/LegacyBackup/{file}.json");
+            }
         }
 
         public void SavePurchaseManifest()
@@ -814,6 +901,47 @@ namespace Tileman
         }
 
         // --------------------------------------- DEPRECATED FUNCTIONS -------------------------------- //
+
+        private void DEPRECATED_PlaceInTempArea(GameLocation gameLocation)
+        {
+            Monitor.Log($"Placing Tiles in Temporary Area: {Game1.whereIsTodaysFest}", LogLevel.Debug);
+
+            DEPRECATED_PlaceTiles(gameLocation);
+            ThisLocationTiles = tileList;
+            tileList = new();
+        }
+
+        private void DEPRECATED_PlaceTiles(GameLocation mapLocation)
+        {
+            int mapWidth = mapLocation.map.Layers[0].LayerWidth;
+            int mapHeight = mapLocation.map.Layers[0].LayerHeight;
+
+            for (int i = 1; i < mapWidth - 1; i++)
+            {
+                for (int j = 1; j < mapHeight - 1; j++)
+                {
+                    if (/*!IsTileAt(i, j, mapLocation)
+                        &&*/
+                        !mapLocation.isObjectAtTile(i, j)
+                        && !mapLocation.isOpenWater(i, j)
+                        && !mapLocation.isTerrainFeatureAt(i, j)
+                        && mapLocation.isTilePlaceable(new Vector2(i, j))
+                        && mapLocation.isTileLocationTotallyClearAndPlaceable(new Vector2(i, j))
+                        && mapLocation.Map.Layers[0].IsValidTileLocation(i, j)
+                        && mapLocation.isCharacterAtTile(new Vector2(i, j)) == null
+
+                        )
+                    {
+                        if (new Vector2(Game1.player.position.X, Game1.player.position.Y) != new Vector2(i, j))
+                        {
+                            var t = new KaiTile(i, j, mapLocation.Name);
+                            tileList.Add(t);
+                        }
+                    }
+                }
+            }
+        }
+
 
         private void DEPRECATED_PlaceInMaps()
         {
@@ -843,7 +971,7 @@ namespace Tileman
 
                     if (locationCount < amountLocations)
                     {
-                        PlaceTiles(Game1.getLocationFromName(location.NameOrUniqueName));
+                        DEPRECATED_PlaceTiles(Game1.getLocationFromName(location.NameOrUniqueName));
 
                     }
                     else
@@ -868,7 +996,7 @@ namespace Tileman
 
                     if (Game1.getLocationFromName(mineString) != null)
                     {
-                        PlaceTiles(Game1.getLocationFromName(mineString));
+                        DEPRECATED_PlaceTiles(Game1.getLocationFromName(mineString));
                         Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
 
                         tileDict.Add(mineString, tileList);
@@ -889,7 +1017,7 @@ namespace Tileman
 
                     if (Game1.getLocationFromName(mineString) != null)
                     {
-                        PlaceTiles(Game1.getLocationFromName(mineString));
+                        DEPRECATED_PlaceTiles(Game1.getLocationFromName(mineString));
                         Monitor.Log($"Placing Tiles in: {mineString}", LogLevel.Debug);
 
                         tileDict.Add(mineString, tileList);
