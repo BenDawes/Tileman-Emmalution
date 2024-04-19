@@ -25,5 +25,7 @@ namespace Tileman
 
         public bool Legacy { get; set; } = true;
 
+        public int LocationTransitionTime { get; set; } = 3;
+
     }
 }

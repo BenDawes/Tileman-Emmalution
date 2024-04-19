@@ -67,9 +67,11 @@ namespace Tileman
         public int difficulty_mode = 0;
         public int purchase_count=0;
         public int overlay_mode = 0;
+        public int location_transition_time = 3; 
 
         public int amountLocations = 200;
         private int locationDelay = 0;
+        
         private int collisionTick = 0;
 
         List<KaiTile> tileList = new();
@@ -485,52 +487,46 @@ namespace Tileman
         private void GroupIfLocationChange()
 
         {
-            if (Game1.locationRequest != null)
+            if (!location_changed && Game1.locationRequest != null && Game1.locationRequest.Location != Game1.currentLocation)
             {
-                if (Game1.locationRequest.Location != Game1.currentLocation && !location_changed)
-                {
-                    locationDelay = 3;
-                    location_changed = true;
+                locationDelay = location_transition_time;
+                location_changed = true;
 
-                    if (Game1.currentLocation.Name == "Temp")
-                    {
-                        if (legacy)
-                        {
-                            SaveLocationTiles(Game1.currentLocation);
-                        }
-                        else
-                        {
-                            SavePurchaseManifest();
-                        }
-                    }
+                if (legacy && Game1.currentLocation.Name == "Temp")
+                {
+                    SaveLocationTiles(Game1.currentLocation);
                 }
             }
-            else if (location_changed)
+            if (!location_changed)
             {
-                if (locationDelay <= 0)
+                return;
+            }
+
+            locationDelay = Math.Max(locationDelay - 1, 0);
+
+            if (locationDelay > 0)
+            {
+                return;
+            }
+            location_changed = false;
+            if (legacy)
+            {
+                //First encounter with specific Temp area
+                if (Game1.currentLocation.Name == "Temp" && Helper.Data.ReadJsonFile<MapData>($"jsons/" +
+                        $"{Constants.SaveFolderName}/" +
+                        $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
                 {
-                    location_changed = false;
-                    if (legacy)
-                    {
-                        //First encounter with specific Temp area
-                        if (Game1.currentLocation.Name == "Temp" && Helper.Data.ReadJsonFile<MapData>($"jsons/" +
-                                $"{Constants.SaveFolderName}/" +
-                                $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
-                        {
-                            PlaceInTempArea(Game1.currentLocation);
-                        }
-                        else
-                        {
-                            Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
-                            DEPRECATED_GetLocationTiles(Game1.currentLocation);
-                        }
-                    }
-                    else
-                    {
-                        FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
-                    }
+                    PlaceInTempArea(Game1.currentLocation);
                 }
-                locationDelay--;
+                else
+                {
+                    Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
+                    DEPRECATED_GetLocationTiles(Game1.currentLocation);
+                }
+            }
+            else
+            {
+                FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
             }
         }
         private bool IsTilePurchased(GameLocation location, int tileX, int tileY)
@@ -753,7 +749,8 @@ namespace Tileman
                 CavernsExtra   = caverns_extra,
                 DifficultyMode = difficulty_mode,
                 PurchaseCount  = purchase_count,
-                Legacy         = legacy
+                Legacy         = legacy,
+                LocationTransitionTime = location_transition_time
             };
 
             Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
@@ -771,6 +768,7 @@ namespace Tileman
             d.DifficultyMode = difficulty_mode;
             d.PurchaseCount = purchase_count;
             d.Legacy = legacy;
+            d.LocationTransitionTime = location_transition_time;
 
             var tileData = Helper.Data.ReadJsonFile<ModData>("config.json") ?? d;
 
@@ -798,6 +796,7 @@ namespace Tileman
             difficulty_mode = tileData.DifficultyMode;
             purchase_count = tileData.PurchaseCount;
             legacy = tileData.Legacy;
+            location_transition_time = tileData.LocationTransitionTime;
         }
 
         public void SavePurchaseManifest()
