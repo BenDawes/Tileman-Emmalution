@@ -27,5 +27,7 @@ namespace Tileman
 
         public int LocationTransitionTime { get; set; } = 3;
 
+        public int OverlayMode { get; set; } = 2;
+
     }
 }

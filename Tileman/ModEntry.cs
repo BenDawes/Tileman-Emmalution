@@ -10,8 +10,7 @@ using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
-using xTile.Layers;
-using xTile.Tiles;
+using xTile.Dimensions;
 
 namespace Tileman
 {
@@ -66,13 +65,16 @@ namespace Tileman
         public int caverns_extra = 0;
         public int difficulty_mode = 0;
         public int purchase_count=0;
-        public int overlay_mode = 0;
+        public int overlay_mode = 2;
+        private int NUM_OVERLAY_MODES = 3;
         public int location_transition_time = 3; 
 
         public int amountLocations = 200;
         private int locationDelay = 0;
         
         private int collisionTick = 0;
+
+        private Location targetTile = new();
 
         List<KaiTile> tileList = new();
         List<KaiTile> ThisLocationTiles = new();
@@ -254,15 +256,22 @@ namespace Tileman
             }
             if (e.Button == SButton.H)
             {
-                overlay_mode++;
+                overlay_mode = (overlay_mode + 1) % NUM_OVERLAY_MODES;
                 var mode = "Mouse";
-                if (overlay_mode > 1)
+                switch (overlay_mode)
                 {
-                    mode = "Controller";
-                    overlay_mode = 0;
+                    case 0:
+                        mode = "Controller (Legacy)";
+                        break;
+                    case 1:
+                        mode = "Mouse";
+                        break;
+                    case 2:
+                        mode = "Controller";
+                        break;
                 }
 
-                Monitor.Log($"Tileman Overlay Mode set to:{mode}", LogLevel.Debug);
+                Monitor.Log($"Tileman Overlay Mode set to: {mode}", LogLevel.Debug);
                 Game1.playSoundPitched("coin", 1200);
             }
 
@@ -306,6 +315,7 @@ namespace Tileman
                 }
             }
 
+            UpdateTargetTile();
             GroupIfLocationChange();
 
             var anyCollision = false;
@@ -340,13 +350,37 @@ namespace Tileman
             if (tool_button_pushed) PurchaseTilePreCheck();
         }
 
+        public void UpdateTargetTile()
+        {
+            Location result = default;
+
+            Point loc = Game1.player.getStandingXY();
+            switch (Game1.player.FacingDirection)
+            {
+                case 0:
+                    result = new Location(loc.X, loc.Y - 64);
+                    break;
+                case 1:
+                    result = new Location(loc.X + 64, loc.Y);
+                    break;
+                case 2:
+                    result = new Location(loc.X, loc.Y + 64);
+                    break;
+                case 3:
+                    result = new Location(loc.X - 64, loc.Y);
+                    break;
+            }
+
+            targetTile = result / 64;
+        }
 
         private void DrawPrice(KaiTile t, RenderedWorldEventArgs e, ref Texture2D texture)
         {
             var stringColor = Color.Gold;
             bool useCursor = overlay_mode == 1;
-            int targetX = useCursor ? (int)Math.Floor(Game1.currentCursorTile.X) : Game1.player.nextPositionTile().X;
-            int targetY = useCursor ? (int)Math.Floor(Game1.currentCursorTile.Y) : Game1.player.nextPositionTile().Y;
+            Vector2 target = GetCurrentTarget();
+            int targetX = (int)Math.Floor(target.X);
+            int targetY = (int)Math.Floor(target.Y);
             Vector2 textPosition = useCursor ? new Vector2(Game1.getMousePosition().X, Game1.getMousePosition().Y - Game1.tileSize)
                                             : new Vector2((t.tileX) * 64 - Game1.viewport.X, (t.tileY) * 64 - 64 - Game1.viewport.Y);
 
@@ -399,30 +433,39 @@ namespace Tileman
             return dynamic_tile_price;
         }
 
+        private Vector2 GetCurrentTarget()
+        {
+            Vector2 currentTarget;
+            switch (overlay_mode)
+            {
+                case 0:
+                    // Legacy "facing" system
+                    currentTarget = new Vector2(Game1.player.nextPositionTile().X, Game1.player.nextPositionTile().Y);
+                    break;
+                case 1:
+                    // Mouse
+                    currentTarget = new Vector2(Game1.currentCursorTile.X, Game1.currentCursorTile.Y);
+                    break;
+                case 2:
+                    // Newer facing system
+                    currentTarget = new Vector2(targetTile.X, targetTile.Y);
+                    break;
+                default:
+                    return new();
+            }
+            return currentTarget;
+        }
+
         private void PurchaseTilePreCheck()
         {
+            Vector2 currentTarget = GetCurrentTarget();
 
             for (int i = 0; i < ThisLocationTiles.Count; i++)
             {
-
                 KaiTile t = ThisLocationTiles[i];
-
-                //Cursor 
-                if (overlay_mode == 1)
+                if (currentTarget == new Vector2(t.tileX, t.tileY))
                 {
-                    if (Game1.currentCursorTile == new Vector2(t.tileX,t.tileY) )
-                    {
-                        PurchaseTileCheck(t);
-                    }
-                }
-                //Keyboard or Controller
-                else 
-                {
-
-                    if (Game1.player.nextPositionTile().X == t.tileX && Game1.player.nextPositionTile().Y == t.tileY)
-                    {
-                        PurchaseTileCheck(t);
-                    }
+                    PurchaseTileCheck(t);
                 }
             }
         }
@@ -654,14 +697,14 @@ namespace Tileman
             {
                 return false;
             }
-            Rectangle tileBox = new(tile.tileX * 64, tile.tileY * 64, tile.tileW, tile.tileH);
-            Rectangle playerBox = Game1.player.GetBoundingBox();
+            Microsoft.Xna.Framework.Rectangle tileBox = new(tile.tileX * 64, tile.tileY * 64, tile.tileW, tile.tileH);
+            Microsoft.Xna.Framework.Rectangle playerBox = Game1.player.GetBoundingBox();
 
             var collided = false;
             if (playerBox.Intersects(tileBox))
             {
                 collided = true;
-                Rectangle.Intersect(ref playerBox, ref tileBox, out Rectangle intersection);
+                Microsoft.Xna.Framework.Rectangle.Intersect(ref playerBox, ref tileBox, out Microsoft.Xna.Framework.Rectangle intersection);
                 Point directionToMove = playerBox.Center - tileBox.Center;
                 bool moveX = Math.Abs(directionToMove.X) > Math.Abs(directionToMove.Y);
                 if (moveX)
@@ -716,7 +759,8 @@ namespace Tileman
                 DifficultyMode = difficulty_mode,
                 PurchaseCount  = purchase_count,
                 Legacy         = legacy,
-                LocationTransitionTime = location_transition_time
+                LocationTransitionTime = location_transition_time,
+                OverlayMode    = overlay_mode
             };
 
             Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
@@ -735,6 +779,7 @@ namespace Tileman
             d.PurchaseCount = purchase_count;
             d.Legacy = legacy;
             d.LocationTransitionTime = location_transition_time;
+            d.OverlayMode = overlay_mode;
 
             var tileData = Helper.Data.ReadJsonFile<ModData>("config.json") ?? d;
 
@@ -763,6 +808,7 @@ namespace Tileman
             purchase_count = tileData.PurchaseCount;
             legacy = tileData.Legacy;
             location_transition_time = tileData.LocationTransitionTime;
+            overlay_mode = tileData.OverlayMode;
 
 
             var hasOldLocationFiles = Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/Farm.json") != null;
@@ -773,13 +819,13 @@ namespace Tileman
 
         }
 
-        private void MigrateRegion(string locationName, GameLocation gameLocation)
+        private bool MigrateRegion(string locationName, GameLocation gameLocation)
         {
             this.Monitor.Log("Migrating file " + locationName, LogLevel.Debug);
             var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json");
             if (tileData == null)
             {
-                return;
+                return false;
             }
 
             var purchaseDataForRegion = purchased_tiles_by_location.data.GetOrCreate(locationName);
@@ -832,6 +878,7 @@ namespace Tileman
                 }
             }
             SavePurchaseManifest();
+            return true;
         }
 
         private void MigrateModDataFromLegacySystem()
@@ -844,16 +891,20 @@ namespace Tileman
             foreach (GameLocation location in GetLocations())
             {
                 var filename = GetTileKey(location);
-                MigrateRegion(filename, location);
-                allFileNames.Add(filename);
+                if (MigrateRegion(filename, location))
+                { 
+                    allFileNames.Add(filename);
+                }
             }
 
             for (int i = 1; i <= 220 + caverns_extra; i++)
             {
                 var gameLocation = Game1.getLocationFromName("UndergroundMine" + i);
                 var locationName = gameLocation.Name;
-                MigrateRegion(locationName, gameLocation);
-                allFileNames.Add(locationName);
+                if (MigrateRegion(locationName, gameLocation))
+                {
+                    allFileNames.Add(locationName);
+                }
             }
 
             //VolcanoDungeon0 - 9
@@ -861,8 +912,10 @@ namespace Tileman
             {
                 var gameLocation = Game1.getLocationFromName("VolcanoDungeon" + i);
                 var locationName = gameLocation.Name;
-                MigrateRegion(locationName, gameLocation);
-                allFileNames.Add(locationName);
+                if (MigrateRegion(locationName, gameLocation))
+                {
+                    allFileNames.Add(locationName);
+                }
             }
 
             System.IO.DirectoryInfo root = new($"{Constants.GamePath}/Mods/Tileman/jsons/{Constants.SaveFolderName}");
