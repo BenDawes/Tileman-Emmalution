@@ -360,7 +360,7 @@ namespace Tileman
                     texture = tex_insufficientFundsTile;
                 }
 
-                e.SpriteBatch.DrawString(Game1.dialogueFont, $"${(int)Math.Floor(tile_price)}", textPosition, stringColor);
+                e.SpriteBatch.DrawString(Game1.dialogueFont, $"${(int)Math.Floor(GetTilePrice())}", textPosition, stringColor);
             }
         }
 
@@ -377,7 +377,7 @@ namespace Tileman
             return locations;
         }
 
-        private void GetTilePrice()
+        private double GetTilePrice()
         {
             dynamic_tile_price = tile_price;
             switch (difficulty_mode)
@@ -396,6 +396,7 @@ namespace Tileman
                     dynamic_tile_price = purchase_count;
                     break;
             }
+            return dynamic_tile_price;
         }
 
         private void PurchaseTilePreCheck()
