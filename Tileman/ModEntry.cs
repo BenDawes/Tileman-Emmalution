@@ -11,6 +11,7 @@ using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
 using xTile.Dimensions;
+using static StardewValley.Minigames.TargetGame;
 
 namespace Tileman
 {
@@ -66,7 +67,7 @@ namespace Tileman
         public int difficulty_mode = 0;
         public int purchase_count=0;
         public int overlay_mode = 2;
-        private int NUM_OVERLAY_MODES = 3;
+        private int NUM_OVERLAY_MODES = 4;
         public int location_transition_time = 3;
 
         private bool seen_emmalution_easter_egg = false;
@@ -274,6 +275,9 @@ namespace Tileman
                     case 2:
                         mode = "Controller";
                         break;
+                    case 3:
+                        mode = "Mouse (nearby only)";
+                        break;
                 }
 
                 Monitor.Log($"Tileman Overlay Mode set to: {mode}", LogLevel.Debug);
@@ -293,6 +297,10 @@ namespace Tileman
         {
             days_started += 1;
             this.Monitor.Log("Day started in " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
+            for (int i = 0; i < 10 ; i++)
+            {
+                this.Monitor.Log("UndergroundMine" + (i * 7) + " has name " + Game1.getLocationFromName("UndergroundMine" + (i * 7)).Name, LogLevel.Debug);
+            }
             if (legacy)
             {
                 DEPRECATED_PlaceInMaps();
@@ -395,12 +403,14 @@ namespace Tileman
         private void DrawPrice(KaiTile t, RenderedWorldEventArgs e, ref Texture2D texture)
         {
             var stringColor = Color.Gold;
-            bool useCursor = overlay_mode == 1;
+            bool useCursor = overlay_mode == 1 || overlay_mode == 3;
             Vector2 target = GetCurrentTarget();
             int targetX = (int)Math.Floor(target.X);
             int targetY = (int)Math.Floor(target.Y);
             Vector2 textPosition = useCursor ? new Vector2(Game1.getMousePosition().X, Game1.getMousePosition().Y - Game1.tileSize)
                                             : new Vector2((t.tileX) * 64 - Game1.viewport.X, (t.tileY) * 64 - 64 - Game1.viewport.Y);
+
+            Vector2 playerTile = Game1.player.getTileLocation();
 
             if (targetX == t.tileX && targetY == t.tileY)
             {
@@ -410,6 +420,11 @@ namespace Tileman
                 {
                     stringColor = Color.Red;
                     texture = tex_insufficientFundsTile;
+                }
+                else if (overlay_mode == 3 && Math.Max(Math.Abs(playerTile.X - t.tileX), Math.Abs(playerTile.Y - t.tileY)) > 1)
+                {
+                    stringColor = Color.Yellow;
+                    texture = tex_distantTile;
                 }
 
                 e.SpriteBatch.DrawString(Game1.dialogueFont, $"${(int)Math.Floor(GetTilePrice())}", textPosition, stringColor);
@@ -468,6 +483,10 @@ namespace Tileman
                     // Newer facing system
                     currentTarget = new Vector2(targetTile.X, targetTile.Y);
                     break;
+                case 3:
+                    // Mouse, but only nearby
+                    currentTarget = new Vector2(Game1.currentCursorTile.X, Game1.currentCursorTile.Y);
+                    break;
                 default:
                     return new();
             }
@@ -477,7 +496,15 @@ namespace Tileman
         private void PurchaseTilePreCheck()
         {
             Vector2 currentTarget = GetCurrentTarget();
-
+            if (overlay_mode == 3)
+            {
+                Vector2 playerTile = Game1.player.getTileLocation();
+                if (Math.Max(Math.Abs(playerTile.X - currentTarget.X), Math.Abs(playerTile.Y - currentTarget.Y)) > 1)
+                {
+                    // Tile was out of range
+                    return;
+                }
+            }
             for (int i = 0; i < ThisLocationTiles.Count; i++)
             {
                 KaiTile t = ThisLocationTiles[i];
@@ -531,11 +558,15 @@ namespace Tileman
 
             locationDelay = Math.Max(locationDelay - 1, 0);
 
+            Game1.player.Position = Game1.player.lastPosition;
+
             if (locationDelay > 0)
             {
                 return;
             }
             location_changed = false;
+            this.Monitor.Log("Entered " + Game1.currentLocation.Name, LogLevel.Debug);
+
             if (legacy)
             {
                 //First encounter with specific Temp area
