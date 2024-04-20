@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using System.Threading;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -10,6 +11,8 @@ using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
+using StardewValley.Monsters;
+using Tileman;
 using xTile.Dimensions;
 using static StardewValley.Minigames.TargetGame;
 
@@ -68,7 +71,7 @@ namespace Tileman
         public int purchase_count=0;
         public int overlay_mode = 2;
         private int NUM_OVERLAY_MODES = 4;
-        public int location_transition_time = 3;
+        public int location_transition_time = 10;
 
         private bool seen_emmalution_easter_egg = false;
         private bool should_show_emmalution_easter_egg = false;
@@ -80,6 +83,12 @@ namespace Tileman
         private int collisionTick = 0;
 
         private Location targetTile = new();
+
+        private GameLocation lastLocation = Game1.currentLocation;
+        private GameLocation targetLocation;
+        private GameLocation currentLocation;
+
+        private Vector2 startLocationInNewLocation = default;
 
         List<KaiTile> tileList = new();
         List<KaiTile> ThisLocationTiles = new();
@@ -248,10 +257,6 @@ namespace Tileman
             if (!Context.IsPlayerFree) return;
             if (Game1.player.isFakeEventActor) return;
 
-            if(e.Button == SButton.T)
-            {
-                Game1.warpFarmer("UndergroundMine113", 13, 20, 2);
-            }
             if (e.Button == SButton.G)
             {
                 toggle_overlay = !toggle_overlay;
@@ -296,11 +301,6 @@ namespace Tileman
         private void DayStartedUpdate(object sender, DayStartedEventArgs e)
         {
             days_started += 1;
-            this.Monitor.Log("Day started in " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
-            for (int i = 0; i < 10 ; i++)
-            {
-                this.Monitor.Log("UndergroundMine" + (i * 7) + " has name " + Game1.getLocationFromName("UndergroundMine" + (i * 7)).Name, LogLevel.Debug);
-            }
             if (legacy)
             {
                 DEPRECATED_PlaceInMaps();
@@ -416,7 +416,7 @@ namespace Tileman
             {
                 texture = tex_purchaseTile;
 
-                if (Game1.player.Money < (int)Math.Floor(tile_price))
+                if (Game1.player.Money < (int)Math.Floor(dynamic_tile_price))
                 {
                     stringColor = Color.Red;
                     texture = tex_insufficientFundsTile;
@@ -541,52 +541,24 @@ namespace Tileman
         private void GroupIfLocationChange()
 
         {
-            if (!location_changed && Game1.locationRequest != null && Game1.locationRequest.Location != Game1.currentLocation)
+            if (legacy)
             {
-                locationDelay = location_transition_time;
-                location_changed = true;
-
-                if (legacy && Game1.currentLocation.Name == "Temp")
-                {
-                    SaveLocationTiles(Game1.currentLocation);
-                }
+                DEPRECATED_GroupIfLocationChange();
+                return;
             }
+
+            lastLocation = currentLocation;
+            currentLocation = Game1.currentLocation;
+            location_changed = currentLocation != lastLocation && locationDelay <= 0;
             if (!location_changed)
             {
                 return;
             }
-
-            locationDelay = Math.Max(locationDelay - 1, 0);
-
-            Game1.player.Position = Game1.player.lastPosition;
-
-            if (locationDelay > 0)
-            {
-                return;
-            }
-            location_changed = false;
-            this.Monitor.Log("Entered " + Game1.currentLocation.Name, LogLevel.Debug);
-
-            if (legacy)
-            {
-                //First encounter with specific Temp area
-                if (Game1.currentLocation.Name == "Temp" && Helper.Data.ReadJsonFile<MapData>($"jsons/" +
-                        $"{Constants.SaveFolderName}/" +
-                        $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
-                {
-                    DEPRECATED_PlaceInTempArea(Game1.currentLocation);
-                }
-                else
-                {
-                    Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
-                    DEPRECATED_GetLocationTiles(Game1.currentLocation);
-                }
-            }
-            else
-            {
-                FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
-            }
+            FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
+            this.Monitor.Log("Entered " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
         }
+
+
         private bool IsTilePurchased(GameLocation location, int tileX, int tileY)
         {
             var locationName = GetTileKey(location);
@@ -635,7 +607,6 @@ namespace Tileman
             int mapHeight = gameLocation.map.Layers[0].LayerHeight;
 
             ThisLocationTiles = new();
-
 
             var playerPos = new Vector2(Game1.player.position.X, Game1.player.position.Y);
             for (int i = 1; i < mapWidth - 1; i++)
@@ -689,27 +660,6 @@ namespace Tileman
             }
         }
 
-        private void SaveLocationTiles(GameLocation gameLocation)
-        {
-            var locationName = gameLocation.Name;
-
-            if (locationName == "Temp") locationName += Game1.whereIsTodaysFest;
-            Monitor.Log($"Saving in {locationName}", LogLevel.Debug);
-
-            var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json") ?? new MapData();
-
-            if (gameLocation.Name == "Temp")
-            {
-                tileData.AllKaiTilesList = ThisLocationTiles;
-            }
-            else
-            {
-                tileData.AllKaiTilesList = tileDict[locationName];
-            }
-            Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json", tileData);
-        }
-
-
         private bool IsTempLocation(GameLocation gameLocation)
         {
             return gameLocation.Name == "Temp";
@@ -718,10 +668,20 @@ namespace Tileman
         private string GetTileKey(GameLocation gameLocation)
         {
             var locationName = gameLocation.Name;
+            if (locationName == "Temp")
+            {
+                locationName += Game1.currentSeason + Game1.dayOfMonth;
+            }
+            return locationName;
+        }
+
+        private string DEPRECATED_GetTileKey(GameLocation gameLocation)
+        {
+            var locationName = gameLocation.Name;
             if (locationName == "Temp") locationName += Game1.whereIsTodaysFest;
             return locationName;
-
         }
+
         private void ResetValues()
         {
             this.Monitor.Log("Resetting values", LogLevel.Debug);
@@ -788,7 +748,7 @@ namespace Tileman
             {
                 foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
                 {
-                    SaveLocationTiles(Game1.getLocationFromName(entry.Key));
+                    DEPRECATED_SaveLocationTiles(Game1.getLocationFromName(entry.Key));
                 }
                 tileDict.Clear();
             }
@@ -1017,6 +977,26 @@ namespace Tileman
 
         // --------------------------------------- DEPRECATED FUNCTIONS -------------------------------- //
 
+        private void DEPRECATED_SaveLocationTiles(GameLocation gameLocation)
+        {
+            var locationName = gameLocation.Name;
+
+            if (locationName == "Temp") locationName += Game1.whereIsTodaysFest;
+            Monitor.Log($"Saving in {locationName}", LogLevel.Debug);
+
+            var tileData = Helper.Data.ReadJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json") ?? new MapData();
+
+            if (gameLocation.Name == "Temp")
+            {
+                tileData.AllKaiTilesList = ThisLocationTiles;
+            }
+            else
+            {
+                tileData.AllKaiTilesList = tileDict[locationName];
+            }
+            Helper.Data.WriteJsonFile<MapData>($"jsons/{Constants.SaveFolderName}/{locationName}.json", tileData);
+        }
+
         private void DEPRECATED_PlaceInTempArea(GameLocation gameLocation)
         {
             Monitor.Log($"Placing Tiles in Temporary Area: {Game1.whereIsTodaysFest}", LogLevel.Debug);
@@ -1057,6 +1037,59 @@ namespace Tileman
             }
         }
 
+        private void DEPRECATED_GroupIfLocationChange()
+        {
+
+            if (!location_changed && Game1.locationRequest != null && Game1.locationRequest.Location != Game1.currentLocation)
+            {
+                locationDelay = location_transition_time;
+                lastLocation = Game1.currentLocation;
+                targetLocation = Game1.locationRequest.Location;
+                location_changed = true;
+
+                if (legacy && Game1.currentLocation.Name == "Temp")
+                {
+                    DEPRECATED_SaveLocationTiles(Game1.currentLocation);
+                }
+            }
+            if (!location_changed)
+            {
+                return;
+            }
+
+            if (Game1.currentLocation != lastLocation)
+            {
+                startLocationInNewLocation = Game1.player.Position;
+                lastLocation = Game1.currentLocation;
+            }
+
+            locationDelay = Math.Max(locationDelay - 1, 0);
+
+            if (!IsTempLocation(Game1.currentLocation) && Game1.currentLocation == targetLocation)
+            {
+                Game1.player.Position = startLocationInNewLocation;
+            }
+
+            if (locationDelay > 0)
+            {
+                return;
+            }
+            location_changed = false;
+            this.Monitor.Log("Entered " + Game1.currentLocation.Name, LogLevel.Debug);
+
+            //First encounter with specific Temp area
+            if (Game1.currentLocation.Name == "Temp" && Helper.Data.ReadJsonFile<MapData>($"jsons/" +
+                    $"{Constants.SaveFolderName}/" +
+                    $"{Game1.currentLocation.Name + Game1.whereIsTodaysFest}.json") == null)
+            {
+                DEPRECATED_PlaceInTempArea(Game1.currentLocation);
+            }
+            else
+            {
+                Monitor.Log($"Grouping Tiles At: {Game1.currentLocation.NameOrUniqueName}", LogLevel.Debug);
+                DEPRECATED_GetLocationTiles(Game1.currentLocation);
+            }
+        }
 
         private void DEPRECATED_PlaceInMaps()
         {
@@ -1150,7 +1183,7 @@ namespace Tileman
             //Save all the created files
             foreach (KeyValuePair<string, List<KaiTile>> entry in tileDict)
             {
-                SaveLocationTiles(Game1.getLocationFromName(entry.Key));
+                DEPRECATED_SaveLocationTiles(Game1.getLocationFromName(entry.Key));
             }
             tileDict.Clear();
 
@@ -1160,8 +1193,8 @@ namespace Tileman
 
         private void DEPRECATED_GetLocationTiles(GameLocation gameLocation)
         {
-            this.Monitor.Log("Getting tiles for " + GetTileKey(gameLocation), LogLevel.Debug);
-            var locationName = GetTileKey(gameLocation);
+            this.Monitor.Log("Getting tiles for " + DEPRECATED_GetTileKey(gameLocation), LogLevel.Debug);
+            var locationName = DEPRECATED_GetTileKey(gameLocation);
 
             if (tileDict.ContainsKey(locationName))
             {
@@ -1215,7 +1248,7 @@ namespace Tileman
             data[EasterEggName] = "Hello @ and all berries out there! ^If you're seeing this, you've been playing the upgraded version " +
                 "of this mod for 10 in game days straight. Hopefully that means nothing has broken and it's working well for you! " +
                 "^Thank you for making so much wonderful content. Please give Chewie a cuddle for us and don't forget to like and subscribe! Take care!" +
-                "  ^   -Ben & Claire of Pickle Farm";
+                "  ^   - The Berries of Pickle Farm";
         }
     }
 }
