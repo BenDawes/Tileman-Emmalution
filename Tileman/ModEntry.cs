@@ -11,6 +11,7 @@ using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Locations;
+using StardewValley.Menus;
 using StardewValley.Monsters;
 using Tileman;
 using xTile.Dimensions;
@@ -75,6 +76,9 @@ namespace Tileman
 
         private bool seen_emmalution_easter_egg = false;
         private bool should_show_emmalution_easter_egg = false;
+        private bool shown_perfection = false;
+        private bool show_perfection_on_change = false;
+
         private int days_started = 0;
 
         public int amountLocations = 200;
@@ -142,11 +146,20 @@ namespace Tileman
             helper.Events.GameLoop.DayStarted += this.DayStartedUpdate;
             helper.Events.GameLoop.ReturnedToTitle += this.TitleReturnUpdate;
 
+            helper.Events.Player.InventoryChanged += this.InventoryChanged;
             helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             tex_baseTile = helper.ModContent.Load<Texture2D>("assets/tile.png");
             tex_purchaseTile = helper.ModContent.Load<Texture2D>("assets/tile_2.png");
             tex_insufficientFundsTile = helper.ModContent.Load<Texture2D>("assets/tile_3.png");
             tex_distantTile = helper.ModContent.Load<Texture2D>("assets/tile_4.png");
+        }
+
+        private void InventoryChanged(object sender, InventoryChangedEventArgs e)
+        {
+            if (IsEmmaPlaying() && !show_perfection_on_change && !shown_perfection && Game1.player.hasItemInInventoryNamed("Statue Of True Perfection"))
+            {
+                show_perfection_on_change = true;
+            }
         }
 
         private void removeSpecificTile(int xTile, int yTile, string gameLocation)
@@ -553,6 +566,14 @@ namespace Tileman
             if (!location_changed)
             {
                 return;
+            }
+            if (show_perfection_on_change)
+            {
+                shown_perfection = true;
+                show_perfection_on_change = false;
+
+                string message = "A breeze passes through the valley, and you hear the whispers of the Berries congratulating you on your accomplishments";
+                Game1.activeClickableMenu = new DialogueBox(message);
             }
             FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
             this.Monitor.Log("Entered " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
