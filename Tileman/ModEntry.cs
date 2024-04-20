@@ -67,7 +67,11 @@ namespace Tileman
         public int purchase_count=0;
         public int overlay_mode = 2;
         private int NUM_OVERLAY_MODES = 3;
-        public int location_transition_time = 3; 
+        public int location_transition_time = 3;
+
+        private bool seen_emmalution_easter_egg = false;
+        private bool should_show_emmalution_easter_egg = false;
+        private int days_started = 0;
 
         public int amountLocations = 200;
         private int locationDelay = 0;
@@ -128,6 +132,7 @@ namespace Tileman
             helper.Events.GameLoop.DayStarted += this.DayStartedUpdate;
             helper.Events.GameLoop.ReturnedToTitle += this.TitleReturnUpdate;
 
+            helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
             tex_baseTile = helper.ModContent.Load<Texture2D>("assets/tile.png");
             tex_purchaseTile = helper.ModContent.Load<Texture2D>("assets/tile_2.png");
             tex_insufficientFundsTile = helper.ModContent.Load<Texture2D>("assets/tile_3.png");
@@ -286,6 +291,7 @@ namespace Tileman
 
         private void DayStartedUpdate(object sender, DayStartedEventArgs e)
         {
+            days_started += 1;
             this.Monitor.Log("Day started in " + GetTileKey(Game1.currentLocation), LogLevel.Debug);
             if (legacy)
             {
@@ -295,6 +301,18 @@ namespace Tileman
             else
             {
                 FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
+            }
+            if (should_show_emmalution_easter_egg && days_started > 10)
+            {
+                if (Game1.player.mailReceived.Contains(MyModMail.EasterEggName))
+                {
+                    should_show_emmalution_easter_egg = false;
+                    seen_emmalution_easter_egg = true;
+                }
+                else
+                {
+                    Game1.player.mailbox.Add(MyModMail.EasterEggName);
+                }
             }
         }
 
@@ -766,6 +784,11 @@ namespace Tileman
             Helper.Data.WriteJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/config.json", tileData);
         }
 
+        private bool IsEmmaPlaying()
+        {
+            return Constants.SaveFolderName == "Terracotta_368105912" && Game1.player.Name == "Emma";
+        }
+
         private void LoadModData(object sender, SaveLoadedEventArgs e)
         {
             var d = new ModData(); // defaultData
@@ -780,6 +803,7 @@ namespace Tileman
             d.Legacy = legacy;
             d.LocationTransitionTime = location_transition_time;
             d.OverlayMode = overlay_mode;
+            d.RandomDebugBoolean = seen_emmalution_easter_egg;
 
             var tileData = Helper.Data.ReadJsonFile<ModData>("config.json") ?? d;
 
@@ -809,6 +833,8 @@ namespace Tileman
             legacy = tileData.Legacy;
             location_transition_time = tileData.LocationTransitionTime;
             overlay_mode = tileData.OverlayMode;
+            seen_emmalution_easter_egg = tileData.RandomDebugBoolean;
+            should_show_emmalution_easter_egg = !seen_emmalution_easter_egg && IsEmmaPlaying();
 
 
             var hasOldLocationFiles = Helper.Data.ReadJsonFile<ModData>($"jsons/{Constants.SaveFolderName}/Farm.json") != null;
@@ -952,6 +978,10 @@ namespace Tileman
         {
             Monitor.Log($"Creating {fileName}.json", LogLevel.Debug);
             System.IO.File.Create($"jsons/{fileName}.json");
+        }
+        private void OnGameLaunched(object sender, GameLaunchedEventArgs e)
+        {
+            Helper.Content.AssetEditors.Add(new MyModMail());
         }
 
         // --------------------------------------- DEPRECATED FUNCTIONS -------------------------------- //
@@ -1130,6 +1160,31 @@ namespace Tileman
                     }
                 }
             }
+        }
+    }
+
+
+
+    public class MyModMail : IAssetEditor
+    {
+        public static string EasterEggName = "EmmaEasterEgg";
+        public MyModMail()
+        {
+        }
+
+        public bool CanEdit<T>(IAssetInfo asset)
+        {
+            return asset.AssetNameEquals("Data\\mail");
+        }
+
+        public void Edit<T>(IAssetData asset)
+        {
+            var data = asset.AsDictionary<string, string>().Data;
+
+            data[EasterEggName] = "Hello @ and all berries out there! ^If you're seeing this, you've been playing the upgraded version " +
+                "of this mod for 10 in game days straight. Hopefully that means nothing has broken and it's working well for you! " +
+                "^Thank you for making so much wonderful content. Please give Chewie a cuddle for us and don't forget to like and subscribe! Take care!" +
+                "  ^   -Ben & Claire of Pickle Farm";
         }
     }
 }

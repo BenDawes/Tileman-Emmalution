@@ -29,5 +29,7 @@ namespace Tileman
 
         public int OverlayMode { get; set; } = 2;
 
+        public bool RandomDebugBoolean { get; set; } = false; // Easter egg
+
     }
 }
