@@ -323,7 +323,7 @@ namespace Tileman
             {
                 FillLocationAndRemovePurchasedTiles(Game1.currentLocation);
             }
-            if (should_show_emmalution_easter_egg && days_started > 10)
+            if (should_show_emmalution_easter_egg && days_started > 7)
             {
                 if (Game1.player.mailReceived.Contains(MyModMail.EasterEggName))
                 {
@@ -1267,7 +1267,7 @@ namespace Tileman
             var data = asset.AsDictionary<string, string>().Data;
 
             data[EasterEggName] = "Hello @ and all berries out there! ^If you're seeing this, you've been playing the upgraded version " +
-                "of this mod for 10 in game days straight. Hopefully that means nothing has broken and it's working well for you! " +
+                "of this mod for a whole week straight. Hopefully that means nothing has broken and it's working well for you! " +
                 "^Thank you for making so much wonderful content. Please give Chewie a cuddle for us and don't forget to like and subscribe! Take care!" +
                 "  ^   - The Berries of Pickle Farm";
         }
