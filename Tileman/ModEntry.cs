@@ -567,6 +567,7 @@ namespace Tileman
             {
                 return;
             }
+            PurchaseTileCheck(new KaiTile(Game1.player.getTileX(), Game1.player.getTileY(), currentLocation.Name), true);
             if (show_perfection_on_change)
             {
                 shown_perfection = true;
