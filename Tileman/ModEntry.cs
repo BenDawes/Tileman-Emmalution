@@ -105,7 +105,7 @@ namespace Tileman
         Texture2D tex_insufficientFundsTile = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
         Texture2D tex_distantTile = new(Game1.game1.GraphicsDevice, Game1.tileSize, Game1.tileSize);
 
-        private bool legacy = true; // Pre-spicykai fork
+        private bool legacy = false; // True for Pre-spicykai fork
 
 
         HashSet<Vector2> specificInclusionsInTempLocation = new()

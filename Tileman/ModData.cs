@@ -23,7 +23,7 @@ namespace Tileman
 
         public int PurchaseCount { get; set; }
 
-        public bool Legacy { get; set; } = true;
+        public bool Legacy { get; set; } = false;
 
         public int LocationTransitionTime { get; set; } = 3;
 

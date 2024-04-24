@@ -1,8 +1,8 @@
 ﻿{
   "Name": "Tileman",
-  "Author": "SpicyKai",
-  "Version": "1.0.6",
-  "Description": "Provides a challenge: Tiles can be puchased at increasingly high prices.",
+  "Author": "BenDawes",
+  "Version": "2.0.0",
+  "Description": "Provides a challenge: Tiles can be puchased at increasingly high prices. Upgraded from SpicyKai's mod.'",
   "UniqueID": "SpicyKai.Tileman",
   "EntryDll": "Tileman.dll",
   "MinimumApiVersion": "3.0.0",
