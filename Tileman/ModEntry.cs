@@ -358,6 +358,10 @@ namespace Tileman
             GroupIfLocationChange();
 
             var anyCollision = false;
+
+            bool hasFoundCollidingTile = false;
+            float currentClosestTileDistance = float.MaxValue;
+            Vector2 playerDelta = new();
             if (toggle_overlay || do_collision)
             {
                 for (int i = 0; i < ThisLocationTiles.Count; i++)
@@ -377,9 +381,13 @@ namespace Tileman
                     //Prevent player from being pushed out of bounds
                     if (do_collision)
                     {
-                        anyCollision |= PlayerCollisionCheck(t);
+                        anyCollision |= PlayerCollisionCheck(t, ref playerDelta, ref currentClosestTileDistance, ref hasFoundCollidingTile);
                     }
                 }
+            }
+            if (anyCollision)
+            {
+                Game1.player.Position += playerDelta;
             }
             if (do_collision && !anyCollision)
             {
@@ -721,7 +729,7 @@ namespace Tileman
             tileDict.Clear();
         }
 
-        private bool PlayerCollisionCheck(KaiTile tile)
+        private bool PlayerCollisionCheck(KaiTile tile, ref Vector2 playerDelta, ref float currentClosestTileDistance, ref bool hasFoundCollidingTile)
         {
 
             if (!(Game1.getLocationFromName(tile.tileIsWhere) == Game1.currentLocation || Game1.currentLocation.Name == "Temp"))
@@ -737,16 +745,21 @@ namespace Tileman
                 collided = true;
                 Microsoft.Xna.Framework.Rectangle.Intersect(ref playerBox, ref tileBox, out Microsoft.Xna.Framework.Rectangle intersection);
                 Point directionToMove = playerBox.Center - tileBox.Center;
-                bool moveX = Math.Abs(directionToMove.X) > Math.Abs(directionToMove.Y);
-                if (moveX)
+                bool moveX = Math.Abs(directionToMove.X) >= Math.Abs(directionToMove.Y);
+                bool moveY = Math.Abs(directionToMove.X) <= Math.Abs(directionToMove.Y);
+                bool moveLeft = Math.Sign(directionToMove.X) <= 0;
+                int deltaX = !moveX ? 0 : intersection.Width * (moveLeft ? -1 : 1);
+                bool moveUp = Math.Sign(directionToMove.Y) <= 0;
+                int deltaY = !moveY ? 0 : intersection.Height * (moveUp ? -1 : 1);
+
+                float thisTileDistance = directionToMove.ToVector2().LengthSquared();
+
+                if (!hasFoundCollidingTile || (thisTileDistance < currentClosestTileDistance))
                 {
-                    bool moveLeft = Math.Sign(directionToMove.X) <= 0;
-                    Game1.player.Position += new Vector2(moveLeft ? -1 * intersection.Width : intersection.Width, 0);
-                }
-                else
-                {
-                    bool moveUp = Math.Sign(directionToMove.Y) <= 0;
-                    Game1.player.Position += new Vector2(0, moveUp ? -1 * intersection.Height : intersection.Height);
+                    playerDelta = new Vector2(deltaX, deltaY);
+                    hasFoundCollidingTile = true;
+                    currentClosestTileDistance = thisTileDistance;
+
                 }
                 collisionTick++;
             }
