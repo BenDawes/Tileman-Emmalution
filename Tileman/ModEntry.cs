@@ -15,6 +15,7 @@ using StardewValley.Menus;
 using StardewValley.Monsters;
 using Tileman;
 using xTile.Dimensions;
+using xTile.Tiles;
 using static StardewValley.Minigames.TargetGame;
 
 namespace Tileman
@@ -85,6 +86,7 @@ namespace Tileman
         private int locationDelay = 0;
         
         private int collisionTick = 0;
+        private KaiTile lastCollidedTile = null;
 
         private Location targetTile = new();
 
@@ -398,6 +400,11 @@ namespace Tileman
                 {
                     Game1.player.Position += playerDelta;
                 }
+            }
+            if (collisionTick > 120 && lastCollidedTile != null)
+            {
+                collisionTick = 0;
+                PurchaseTileCheck(lastCollidedTile, true);
             }
             if (do_collision && !anyCollision)
             {
@@ -777,10 +784,13 @@ namespace Tileman
                 collided = true;
                 Game1.player.Position = Game1.player.lastPosition;
             }
-            if (collisionTick > 120)
+            if (collided)
             {
-                collisionTick = 0;
-                PurchaseTileCheck(tile, true);
+                if (lastCollidedTile != tile)
+                {
+                    collisionTick = 0;
+                }
+                lastCollidedTile = tile;
             }
             return collided;
         }
