@@ -387,7 +387,17 @@ namespace Tileman
             }
             if (anyCollision)
             {
+                collisionTick++;
                 Game1.player.Position += playerDelta;
+                bool secondCollision = false;
+                for (int i = ThisLocationTiles.Count - 1; i >= 0; i--)
+                {
+                    secondCollision |= PlayerCollisionCheck(ThisLocationTiles[i], ref playerDelta, ref currentClosestTileDistance, ref hasFoundCollidingTile);
+                }
+                if (secondCollision)
+                {
+                    Game1.player.Position += playerDelta;
+                }
             }
             if (do_collision && !anyCollision)
             {
@@ -745,8 +755,8 @@ namespace Tileman
                 collided = true;
                 Microsoft.Xna.Framework.Rectangle.Intersect(ref playerBox, ref tileBox, out Microsoft.Xna.Framework.Rectangle intersection);
                 Point directionToMove = playerBox.Center - tileBox.Center;
-                bool moveX = Math.Abs(directionToMove.X) >= Math.Abs(directionToMove.Y);
-                bool moveY = Math.Abs(directionToMove.X) <= Math.Abs(directionToMove.Y);
+                bool moveX = intersection.Width <= intersection.Height;
+                bool moveY = intersection.Width >= intersection.Height;
                 bool moveLeft = Math.Sign(directionToMove.X) <= 0;
                 int deltaX = !moveX ? 0 : intersection.Width * (moveLeft ? -1 : 1);
                 bool moveUp = Math.Sign(directionToMove.Y) <= 0;
@@ -761,13 +771,11 @@ namespace Tileman
                     currentClosestTileDistance = thisTileDistance;
 
                 }
-                collisionTick++;
             }
             if (playerBox.Center == tileBox.Center || playerBox.Intersects(tileBox) && locationDelay > 0)
             {
                 collided = true;
                 Game1.player.Position = Game1.player.lastPosition;
-                collisionTick++;
             }
             if (collisionTick > 120)
             {
